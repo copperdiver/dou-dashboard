@@ -1,0 +1,388 @@
+import { sql } from 'drizzle-orm'
+import { db } from '../../db/client'
+import {
+  approvals,
+  brStates,
+  countries,
+  dailyCountryStats,
+  dailyStateStats,
+  denialReasons,
+  denials,
+  reasonCategories,
+  reasons,
+  sourcePages,
+} from '../../db/schema'
+import { normalizeName } from '../text'
+
+/**
+ * Фиды одобрений и отказов.
+ *
+ * Пагинация — keyset по `(edition_date desc, id desc)`, ровно по составным
+ * индексам `approvals_feed_idx` и `denials_feed_idx`. Смещением (offset)
+ * это делать нельзя: страницы фида листают вглубь истории, и на десятой
+ * странице СУБД перечитывала бы всё начало заново, а вставка свежего дня
+ * сдвигала бы границу и дублировала записи на стыке.
+ */
+
+export const PAGE_SIZE = 25
+
+export type Cursor = { day: string; id: string }
+
+/** Курсор в адресе: `YYYY-MM-DD_uuid`. */
+export function parseCursor(raw: string | undefined): Cursor | null {
+  if (!raw) return null
+  const separator = raw.indexOf('_')
+  if (separator !== 10) return null
+
+  const day = raw.slice(0, separator)
+  const id = raw.slice(separator + 1)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^[0-9a-f-]{36}$/i.test(id)) return null
+
+  return { day, id }
+}
+
+export function formatCursor(cursor: Cursor): string {
+  return `${cursor.day}_${cursor.id}`
+}
+
+export type Page<T> = {
+  items: T[]
+  /** Курсор следующей страницы. null — дальше ничего нет. */
+  next: string | null
+}
+
+/**
+ * Условие поиска по имени.
+ *
+ * Ключ строится тем же `normalizeName`, которым заполнена колонка
+ * `name_norm` при записи: две реализации нормализации неизбежно разошлись
+ * бы, и поиск начал бы терять записи с диакритикой. `like '%…%'` здесь
+ * не приводит к перебору — он обслуживается триграммным gin-индексом.
+ */
+function nameFilter(column: string, query: string | undefined) {
+  const normalized = query ? normalizeName(query) : ''
+  if (normalized.length < 2) return sql``
+  return sql` and ${sql.raw(column)} like ${'%' + normalized + '%'}`
+}
+
+/* ── Одобрения ─────────────────────────────────────────────────────────── */
+
+export type ApprovalItem = {
+  id: string
+  editionDate: string
+  fullName: string
+  countryIso2: string | null
+  countryNameRu: string | null
+  countryNameEn: string | null
+  stateUf: string | null
+  stateNameRu: string | null
+  stateNameEn: string | null
+  birthDate: string | null
+  age: number | null
+  processNumber: string | null
+  sourceUrl: string
+}
+
+export type ApprovalFilters = {
+  country?: string
+  state?: string
+  q?: string
+}
+
+export async function getApprovals(
+  filters: ApprovalFilters,
+  cursor: Cursor | null,
+): Promise<Page<ApprovalItem>> {
+  const { rows } = await db.execute<{
+    id: string
+    edition_date: string
+    full_name: string
+    iso2: string | null
+    country_ru: string | null
+    country_en: string | null
+    uf: string | null
+    state_ru: string | null
+    state_en: string | null
+    birth_date: string | null
+    age_at_publication: number | null
+    process_number: string | null
+    url: string
+  }>(sql`
+    select
+      a.id::text, to_char(a.edition_date, 'YYYY-MM-DD') as edition_date, a.full_name,
+      c.iso2, c.name_ru as country_ru, c.name_en as country_en,
+      s.uf, s.name_ru as state_ru, s.name_en as state_en,
+      to_char(a.birth_date, 'YYYY-MM-DD') as birth_date,
+      a.age_at_publication, a.process_number, p.url
+      from ${approvals} a
+      left join ${countries} c on c.id = a.country_id
+      left join ${brStates} s on s.id = a.state_id
+      join ${sourcePages} p on p.id = a.page_id
+     where a.retired_at is null
+       -- Повторные публикации той же portaria отсекаются: иначе один
+       -- человек появлялся бы в фиде несколько раз.
+       and a.counts_as_new_approval
+       ${filters.country ? sql` and c.iso2 = ${filters.country}` : sql``}
+       ${filters.state ? sql` and s.uf = ${filters.state}` : sql``}
+       ${nameFilter('a.name_norm', filters.q)}
+       ${cursor ? sql` and (a.edition_date, a.id) < (${cursor.day}::date, ${cursor.id}::uuid)` : sql``}
+     order by a.edition_date desc, a.id desc
+     limit ${PAGE_SIZE + 1}
+  `)
+
+  return paginate(
+    rows.map((r) => ({
+      id: r.id,
+      editionDate: r.edition_date,
+      fullName: r.full_name,
+      countryIso2: r.iso2,
+      countryNameRu: r.country_ru,
+      countryNameEn: r.country_en,
+      stateUf: r.uf,
+      stateNameRu: r.state_ru,
+      stateNameEn: r.state_en,
+      birthDate: r.birth_date,
+      age: r.age_at_publication,
+      processNumber: r.process_number,
+      sourceUrl: r.url,
+    })),
+  )
+}
+
+/* ── Отказы ────────────────────────────────────────────────────────────── */
+
+export type DenialReasonItem = {
+  categoryId: number
+  categoryNameRu: string
+  categoryNameEn: string
+  colorSlot: number
+  textPt: string
+  textRu: string | null
+  textEn: string | null
+}
+
+export type DenialItem = {
+  id: string
+  editionDate: string
+  fullName: string
+  processNumber: string | null
+  decisionKind: string
+  isUpheld: boolean
+  isRepublication: boolean
+  /** Есть ли ссылка на первичное решение: подтверждение без неё оговаривается. */
+  hasPrimary: boolean
+  sourceUrl: string
+  reasons: DenialReasonItem[]
+}
+
+export type DenialFilters = {
+  category?: string
+  q?: string
+  /** Показывать подтверждения отказа и прочие решения. */
+  includeUpheld?: boolean
+}
+
+export async function getDenials(
+  filters: DenialFilters,
+  cursor: Cursor | null,
+): Promise<Page<DenialItem>> {
+  const { rows } = await db.execute<{
+    id: string
+    edition_date: string
+    full_name: string
+    process_number: string | null
+    decision_kind: string
+    is_upheld: boolean
+    is_republication: boolean
+    has_primary: boolean
+    url: string
+  }>(sql`
+    select
+      d.id::text, to_char(d.edition_date, 'YYYY-MM-DD') as edition_date, d.full_name,
+      d.process_number, d.decision_kind, d.is_upheld, d.is_republication,
+      (d.appeal_of_id is not null) as has_primary, p.url
+      from ${denials} d
+      join ${sourcePages} p on p.id = d.page_id
+     where d.retired_at is null
+       ${filters.includeUpheld ? sql`` : sql` and d.counts_as_new_denial`}
+       ${
+         filters.category
+           ? sql` and exists (
+                    select 1 from ${denialReasons} dr
+                      join ${reasonCategories} rc on rc.id = dr.category_id
+                     where dr.denial_id = d.id and rc.code = ${filters.category})`
+           : sql``
+       }
+       ${nameFilter('d.name_norm', filters.q)}
+       ${cursor ? sql` and (d.edition_date, d.id) < (${cursor.day}::date, ${cursor.id}::uuid)` : sql``}
+     order by d.edition_date desc, d.id desc
+     limit ${PAGE_SIZE + 1}
+  `)
+
+  const page = paginate(rows)
+  const ids = page.items.map((r) => r.id)
+  const reasonsByDenial = await getReasonsFor(ids)
+
+  return {
+    next: page.next,
+    items: page.items.map((r) => ({
+      id: r.id,
+      editionDate: r.edition_date,
+      fullName: r.full_name,
+      processNumber: r.process_number,
+      decisionKind: r.decision_kind,
+      isUpheld: r.is_upheld,
+      isRepublication: r.is_republication,
+      hasPrimary: r.has_primary,
+      sourceUrl: r.url,
+      reasons: reasonsByDenial.get(r.id) ?? [],
+    })),
+  }
+}
+
+/**
+ * Причины для показанной страницы отказов — отдельным запросом.
+ *
+ * Присоединять их к основному запросу нельзя: у отказа до нескольких
+ * причин, строки размножились бы, и `limit` отрезал бы не по записям,
+ * а по связям — страница получилась бы короче заявленной.
+ */
+async function getReasonsFor(ids: string[]): Promise<Map<string, DenialReasonItem[]>> {
+  const result = new Map<string, DenialReasonItem[]>()
+  if (ids.length === 0) return result
+
+  const { rows } = await db.execute<{
+    denial_id: string
+    category_id: number
+    category_ru: string
+    category_en: string
+    color_slot: number
+    text_pt: string
+    text_ru: string | null
+    text_en: string | null
+  }>(sql`
+    select
+      dr.denial_id::text, dr.category_id,
+      rc.name_ru as category_ru, rc.name_en as category_en, rc.color_slot,
+      r.text_pt, r.text_ru, r.text_en
+      from ${denialReasons} dr
+      join ${reasons} r on r.id = dr.reason_id
+      join ${reasonCategories} rc on rc.id = dr.category_id
+     where dr.denial_id in (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})
+     order by rc.sort_order
+  `)
+
+  for (const row of rows) {
+    const list = result.get(row.denial_id) ?? []
+    list.push({
+      categoryId: row.category_id,
+      categoryNameRu: row.category_ru,
+      categoryNameEn: row.category_en,
+      colorSlot: row.color_slot,
+      textPt: row.text_pt,
+      textRu: row.text_ru,
+      textEn: row.text_en,
+    })
+    result.set(row.denial_id, list)
+  }
+
+  return result
+}
+
+/* ── Справочники для фильтров ──────────────────────────────────────────── */
+
+export type CountryOption = { iso2: string; nameRu: string; nameEn: string; approvals: number }
+
+/**
+ * Страны, встречающиеся в одобрениях, — частые первыми.
+ * Список из 95 позиций по алфавиту заставлял бы искать Гаити в конце.
+ */
+export async function getCountryOptions(): Promise<CountryOption[]> {
+  const { rows } = await db.execute<{
+    iso2: string
+    name_ru: string
+    name_en: string
+    approvals: number
+  }>(sql`
+    select c.iso2, c.name_ru, c.name_en, sum(s.approvals)::int as approvals
+      from ${dailyCountryStats} s
+      join ${countries} c on c.id = s.country_id
+     group by c.iso2, c.name_ru, c.name_en
+     having sum(s.approvals) > 0
+     order by approvals desc, c.name_en
+  `)
+
+  return rows.map((r) => ({
+    iso2: r.iso2,
+    nameRu: r.name_ru,
+    nameEn: r.name_en,
+    approvals: r.approvals,
+  }))
+}
+
+export type StateOption = { uf: string; nameRu: string; nameEn: string; approvals: number }
+
+export async function getStateOptions(): Promise<StateOption[]> {
+  const { rows } = await db.execute<{
+    uf: string
+    name_ru: string
+    name_en: string
+    approvals: number
+  }>(sql`
+    select b.uf, b.name_ru, b.name_en, sum(s.approvals)::int as approvals
+      from ${dailyStateStats} s
+      join ${brStates} b on b.id = s.state_id
+     group by b.uf, b.name_ru, b.name_en
+     having sum(s.approvals) > 0
+     order by approvals desc, b.name_en
+  `)
+
+  return rows.map((r) => ({
+    uf: r.uf,
+    nameRu: r.name_ru,
+    nameEn: r.name_en,
+    approvals: r.approvals,
+  }))
+}
+
+export type CategoryOption = { code: string; nameRu: string; nameEn: string; colorSlot: number }
+
+export async function getCategoryOptions(): Promise<CategoryOption[]> {
+  const { rows } = await db.execute<{
+    code: string
+    name_ru: string
+    name_en: string
+    color_slot: number
+  }>(sql`
+    select code, name_ru, name_en, color_slot
+      from ${reasonCategories}
+     order by sort_order
+  `)
+
+  return rows.map((r) => ({
+    code: r.code,
+    nameRu: r.name_ru,
+    nameEn: r.name_en,
+    colorSlot: r.color_slot,
+  }))
+}
+
+/**
+ * Берём на одну запись больше запрошенного: лишняя строка отвечает на
+ * вопрос «есть ли следующая страница» без второго запроса с count.
+ */
+function paginate<T extends { edition_date?: string; editionDate?: string; id: string }>(
+  rows: T[],
+): Page<T> {
+  const hasMore = rows.length > PAGE_SIZE
+  const items = hasMore ? rows.slice(0, PAGE_SIZE) : rows
+  const last = items[items.length - 1]
+
+  return {
+    items,
+    next:
+      hasMore && last
+        ? formatCursor({ day: last.edition_date ?? last.editionDate ?? '', id: last.id })
+        : null,
+  }
+}

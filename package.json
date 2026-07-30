@@ -27,6 +27,7 @@
     "@anthropic-ai/sdk": "^0.115.0",
     "bullmq": "^5.81.2",
     "drizzle-orm": "^0.45.2",
+    "flag-icons": "^7.5.0",
     "ioredis": "^5.11.1",
     "next": "16.2.12",
     "openai": "^7.1.0",

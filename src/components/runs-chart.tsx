@@ -1,8 +1,24 @@
 'use client'
 
 import { useState } from 'react'
+import type { Dictionary, Locale } from '@/i18n'
+import { interpolate } from '@/i18n'
 import type { DailyRuns } from '@/lib/stats'
-import { formatNumber } from '@/lib/format'
+import { formatDayShort, formatNumber } from '@/lib/format'
+
+/*
+ * Подписи приходят пропсом, а не через словарь целиком: компонент
+ * клиентский, и всё, что он получает, уезжает в браузер. Нужны только
+ * эти ключи — остального в полезной нагрузке быть не должно.
+ */
+type ChartLabels = Pick<
+  Dictionary['jobs'],
+  'dailyChartAlt' | 'emptyChart' | 'colDate' | 'success' | 'failure'
+> &
+  Pick<Dictionary['common'], 'showTable' | 'total'>
+
+/** Подписи легенды — та же пара серий, что и в подсказке. */
+type LegendLabels = Pick<Dictionary['jobs'], 'success' | 'failure'>
 
 // Единицы viewBox подобраны так, чтобы на десктопе они совпадали с CSS-пикселями:
 // иначе масштабирование раздувает толщину столбцов и размер подписей.
@@ -62,7 +78,18 @@ function topRoundedPath(x: number, y: number, width: number, height: number, rad
   ].join(' ')
 }
 
-export function RunsChart({ data }: { data: DailyRuns[] }) {
+export function RunsChart({
+  locale,
+  data,
+  /** Уже согласованное «14 дней»: формы числительных считает сервер. */
+  dayCount,
+  labels,
+}: {
+  locale: Locale
+  data: DailyRuns[]
+  dayCount: string
+  labels: ChartLabels
+}) {
   const [active, setActive] = useState<number | null>(null)
 
   const totals = data.map((day) => day.success + day.failed)
@@ -89,6 +116,7 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
 
     return {
       ...day,
+      label: formatDayShort(locale, day.day),
       index,
       centerX,
       x,
@@ -110,7 +138,7 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full"
         role="img"
-        aria-label={`Запуски задач по суткам за ${data.length} дней. Точные значения — в таблице под графиком.`}
+        aria-label={interpolate(labels.dailyChartAlt, { days: dayCount })}
         onMouseLeave={() => setActive(null)}
       >
         {/* сетка и подписи оси Y */}
@@ -132,7 +160,7 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
                 textAnchor="end"
                 className="fill-ink-muted text-[10px] [font-variant-numeric:tabular-nums]"
               >
-                {formatNumber(tick)}
+                {formatNumber(locale, tick)}
               </text>
             </g>
           )
@@ -180,7 +208,7 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
             textAnchor="middle"
             className="fill-ink-secondary text-[10px] font-semibold [font-variant-numeric:tabular-nums]"
           >
-            {formatNumber(bars[peakIndex].total)}
+            {formatNumber(locale, bars[peakIndex].total)}
           </text>
         )}
 
@@ -216,7 +244,7 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
       {grandTotal === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <p className="rounded-lg border border-hairline bg-surface px-3 py-2 text-xs text-ink-secondary">
-            Запусков пока нет — поднимите воркер
+            {labels.emptyChart}
           </p>
         </div>
       )}
@@ -243,22 +271,22 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
           <dl className="mt-1 space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="h-0.5 w-3 shrink-0 rounded-full bg-series-1" aria-hidden="true" />
-              <dt className="text-ink-secondary">Успешно</dt>
+              <dt className="text-ink-secondary">{labels.success}</dt>
               <dd className="ml-auto font-semibold text-ink [font-variant-numeric:tabular-nums]">
-                {formatNumber(activeBar.success)}
+                {formatNumber(locale, activeBar.success)}
               </dd>
             </div>
             <div className="flex items-center gap-2">
               <span className="h-0.5 w-3 shrink-0 rounded-full bg-series-2" aria-hidden="true" />
-              <dt className="text-ink-secondary">С ошибкой</dt>
+              <dt className="text-ink-secondary">{labels.failure}</dt>
               <dd className="ml-auto font-semibold text-ink [font-variant-numeric:tabular-nums]">
-                {formatNumber(activeBar.failed)}
+                {formatNumber(locale, activeBar.failed)}
               </dd>
             </div>
             <div className="flex items-center gap-2 border-t border-hairline pt-0.5">
-              <dt className="text-ink-secondary">Всего</dt>
+              <dt className="text-ink-secondary">{labels.total}</dt>
               <dd className="ml-auto font-semibold text-ink [font-variant-numeric:tabular-nums]">
-                {formatNumber(activeBar.total)}
+                {formatNumber(locale, activeBar.total)}
               </dd>
             </div>
           </dl>
@@ -266,15 +294,15 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
       )}
 
       <details className="mt-3 text-xs text-ink-secondary">
-        <summary className="cursor-pointer select-none hover:text-ink">Показать таблицей</summary>
+        <summary className="cursor-pointer select-none hover:text-ink">{labels.showTable}</summary>
         <div className="mt-2 max-h-64 overflow-auto rounded-lg border border-hairline">
           <table className="w-full border-collapse text-left [font-variant-numeric:tabular-nums]">
             <thead className="sticky top-0 bg-surface">
               <tr className="border-b border-hairline text-ink-muted">
-                <th scope="col" className="px-3 py-2 font-medium">Дата</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Успешно</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">С ошибкой</th>
-                <th scope="col" className="px-3 py-2 text-right font-medium">Всего</th>
+                <th scope="col" className="px-3 py-2 font-medium">{labels.colDate}</th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">{labels.success}</th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">{labels.failure}</th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">{labels.total}</th>
               </tr>
             </thead>
             <tbody>
@@ -283,10 +311,14 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
                   <th scope="row" className="px-3 py-1.5 font-normal text-ink-secondary">
                     {day.day}
                   </th>
-                  <td className="px-3 py-1.5 text-right text-ink">{formatNumber(day.success)}</td>
-                  <td className="px-3 py-1.5 text-right text-ink">{formatNumber(day.failed)}</td>
                   <td className="px-3 py-1.5 text-right text-ink">
-                    {formatNumber(day.success + day.failed)}
+                    {formatNumber(locale, day.success)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-ink">
+                    {formatNumber(locale, day.failed)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right text-ink">
+                    {formatNumber(locale, day.success + day.failed)}
                   </td>
                 </tr>
               ))}
@@ -299,16 +331,16 @@ export function RunsChart({ data }: { data: DailyRuns[] }) {
 }
 
 /** Легенда повторяет форму марки: для столбцов — прямоугольник. */
-export function RunsChartLegend() {
+export function RunsChartLegend({ labels }: { labels: LegendLabels }) {
   return (
     <div className="flex items-center gap-4 text-xs text-ink-secondary">
       <span className="inline-flex items-center gap-1.5">
         <span className="size-2.5 rounded-[2px] bg-series-1" aria-hidden="true" />
-        Успешно
+        {labels.success}
       </span>
       <span className="inline-flex items-center gap-1.5">
         <span className="size-2.5 rounded-[2px] bg-series-2" aria-hidden="true" />
-        С ошибкой
+        {labels.failure}
       </span>
     </div>
   )

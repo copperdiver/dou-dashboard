@@ -6,8 +6,17 @@ import { useEffect, useState, useTransition } from 'react'
 /**
  * Периодически перезапрашивает серверные данные страницы.
  * Никаких форматов времени в разметке — иначе SSR и клиент расходятся.
+ *
+ * Подпись интервала приходит готовой строкой: интервал форматирует сервер
+ * тем же `formatDuration`, что и остальные длительности на странице.
  */
-export function AutoRefresh({ intervalMs = 30_000 }: { intervalMs?: number }) {
+export function AutoRefresh({
+  intervalMs,
+  labels,
+}: {
+  intervalMs: number
+  labels: { every: string; refresh: string; refreshing: string }
+}) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
   const [enabled, setEnabled] = useState(true)
@@ -29,14 +38,14 @@ export function AutoRefresh({ intervalMs = 30_000 }: { intervalMs?: number }) {
           onChange={(event) => setEnabled(event.target.checked)}
           className="size-3.5 accent-series-1"
         />
-        Обновлять каждые {Math.round(intervalMs / 1000)} с
+        {labels.every}
       </label>
       <button
         type="button"
         onClick={() => startTransition(() => router.refresh())}
         className="rounded-md border border-hairline bg-surface px-2 py-1 hover:text-ink"
       >
-        {pending ? 'Обновляю…' : 'Обновить'}
+        {pending ? labels.refreshing : labels.refresh}
       </button>
     </div>
   )

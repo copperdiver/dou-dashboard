@@ -1,15 +1,35 @@
 import type { JobRun } from '@/db/schema'
 import { StatusBadge } from '@/components/status-badge'
+import type { Dictionary, Locale } from '@/i18n'
+import { interpolate } from '@/i18n'
 import { formatDateTime, formatDuration, formatNumber } from '@/lib/format'
 
-export function RecentRuns({ runs }: { runs: JobRun[] }) {
+type RecentLabels = Pick<
+  Dictionary['jobs'],
+  | 'emptyRecent'
+  | 'colJob'
+  | 'colStatus'
+  | 'colStartedAt'
+  | 'colDuration'
+  | 'colItems'
+  | 'colError'
+  | 'attempt'
+  | 'statusSuccess'
+  | 'statusFailed'
+  | 'statusRunning'
+>
+
+export function RecentRuns({
+  locale,
+  runs,
+  labels,
+}: {
+  locale: Locale
+  runs: JobRun[]
+  labels: RecentLabels
+}) {
   if (runs.length === 0) {
-    return (
-      <p className="text-xs text-ink-secondary">
-        Запусков пока нет. Поднимите воркер (<code className="text-ink">npm run worker</code> или
-        сервис <code className="text-ink">worker</code> в docker compose).
-      </p>
-    )
+    return <p className="text-xs text-ink-secondary">{labels.emptyRecent}</p>
   }
 
   return (
@@ -17,12 +37,12 @@ export function RecentRuns({ runs }: { runs: JobRun[] }) {
       <table className="w-full border-collapse text-left text-xs">
         <thead>
           <tr className="border-b border-hairline text-ink-muted">
-            <th scope="col" className="py-2 pr-3 font-medium">Задача</th>
-            <th scope="col" className="py-2 pr-3 font-medium">Статус</th>
-            <th scope="col" className="py-2 pr-3 font-medium">Начало</th>
-            <th scope="col" className="py-2 pr-3 text-right font-medium">Длительность</th>
-            <th scope="col" className="py-2 pr-3 text-right font-medium">Обработано</th>
-            <th scope="col" className="py-2 font-medium">Ошибка</th>
+            <th scope="col" className="py-2 pr-3 font-medium">{labels.colJob}</th>
+            <th scope="col" className="py-2 pr-3 font-medium">{labels.colStatus}</th>
+            <th scope="col" className="py-2 pr-3 font-medium">{labels.colStartedAt}</th>
+            <th scope="col" className="py-2 pr-3 text-right font-medium">{labels.colDuration}</th>
+            <th scope="col" className="py-2 pr-3 text-right font-medium">{labels.colItems}</th>
+            <th scope="col" className="py-2 font-medium">{labels.colError}</th>
           </tr>
         </thead>
         <tbody className="[font-variant-numeric:tabular-nums]">
@@ -31,18 +51,22 @@ export function RecentRuns({ runs }: { runs: JobRun[] }) {
               <th scope="row" className="py-2 pr-3 font-normal text-ink">
                 {run.jobName}
                 {run.attempt > 1 && (
-                  <span className="ml-1 text-ink-muted">попытка {run.attempt}</span>
+                  <span className="ml-1 text-ink-muted">
+                    {interpolate(labels.attempt, { n: formatNumber(locale, run.attempt) })}
+                  </span>
                 )}
               </th>
               <td className="py-2 pr-3">
-                <StatusBadge status={run.status} />
+                <StatusBadge status={run.status} labels={labels} />
               </td>
-              <td className="py-2 pr-3 text-ink-secondary">{formatDateTime(run.startedAt)}</td>
-              <td className="py-2 pr-3 text-right text-ink-secondary">
-                {formatDuration(run.durationMs)}
+              <td className="py-2 pr-3 text-ink-secondary">
+                {formatDateTime(locale, run.startedAt)}
               </td>
               <td className="py-2 pr-3 text-right text-ink-secondary">
-                {formatNumber(run.itemsProcessed)}
+                {formatDuration(locale, run.durationMs)}
+              </td>
+              <td className="py-2 pr-3 text-right text-ink-secondary">
+                {formatNumber(locale, run.itemsProcessed)}
               </td>
               <td className="max-w-[22ch] truncate py-2 text-ink-muted" title={run.error ?? ''}>
                 {run.error ?? '—'}

@@ -1,31 +1,36 @@
 'use client'
 
 import { useSyncExternalStore } from 'react'
+import type { Dictionary } from '@/i18n'
+import { SEGMENT_GROUP, segmentClass } from '@/components/segmented'
+import { THEME_COOKIE, writeUiCookie, type Theme } from '@/lib/ui-state'
 
-type Theme = 'light' | 'dark' | 'system'
+/** Порядок сегментов: сначала значение по умолчанию. */
+const THEMES: Theme[] = ['system', 'light', 'dark']
 
-const STORAGE_KEY = 'dou-theme'
-
-const LABELS: Record<Theme, string> = {
-  system: 'Как в системе',
-  light: 'Светлая',
-  dark: 'Тёмная',
+/*
+ * Иконки: монитор — «как в системе», солнце — светлая, месяц — тёмная.
+ * Название режима остаётся в подсказке и в скрытой подписи, потому что
+ * иконка сама по себе однозначного значения не несёт.
+ */
+const ICONS: Record<Theme, React.ReactNode> = {
+  system: <path d="M3 5h18v11H3zM8 20h8M12 16v4" />,
+  light: (
+    <>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+    </>
+  ),
+  dark: <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />,
 }
 
-/** Скрипт для <head>: ставит тему до первой отрисовки, чтобы не мигало. */
-export const themeInitScript = `
-(function () {
-  try {
-    var t = localStorage.getItem('${STORAGE_KEY}');
-    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-  } catch (e) {}
-})();
-`
-
-// localStorage — внешнее хранилище, поэтому читаем его через
-// useSyncExternalStore, а не синхронизируем в useEffect.
+/*
+ * Источник истины — атрибут на <html>, который проставил сервер по cookie.
+ * Читаем его через useSyncExternalStore, а не держим копию в состоянии:
+ * при клиентской навигации компонент перемонтируется, и копия разошлась бы
+ * с разметкой.
+ */
 const listeners = new Set<() => void>()
-let snapshot: Theme | null = null
 
 function subscribe(onChange: () => void): () => void {
   listeners.add(onChange)
@@ -35,15 +40,8 @@ function subscribe(onChange: () => void): () => void {
 }
 
 function getSnapshot(): Theme {
-  if (snapshot === null) {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      snapshot = stored === 'light' || stored === 'dark' ? stored : 'system'
-    } catch {
-      snapshot = 'system'
-    }
-  }
-  return snapshot
+  const value = document.documentElement.dataset.theme
+  return value === 'light' || value === 'dark' ? value : 'system'
 }
 
 function getServerSnapshot(): Theme {
@@ -51,39 +49,59 @@ function getServerSnapshot(): Theme {
 }
 
 function setTheme(next: Theme): void {
-  snapshot = next
-  try {
-    if (next === 'system') {
-      delete document.documentElement.dataset.theme
-      localStorage.removeItem(STORAGE_KEY)
-    } else {
-      document.documentElement.dataset.theme = next
-      localStorage.setItem(STORAGE_KEY, next)
-    }
-  } catch {
-    // приватный режим — тема просто не запомнится
+  // Атрибут правим сразу — отклик по нажатию должен быть мгновенным,
+  // а cookie подхватит следующий серверный рендер.
+  if (next === 'system') {
+    delete document.documentElement.dataset.theme
+    writeUiCookie(THEME_COOKIE, null)
+  } else {
+    document.documentElement.dataset.theme = next
+    writeUiCookie(THEME_COOKIE, next)
   }
   for (const listener of listeners) listener()
 }
 
-export function ThemeToggle() {
+export function ThemeToggle({
+  label,
+  labels,
+}: {
+  label: string
+  labels: Dictionary['theme']
+}) {
   const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
   return (
-    <label className="flex items-center gap-2 text-xs text-ink-secondary">
-      <span className="sr-only">Тема оформления</span>
-      <select
-        value={theme}
-        onChange={(event) => setTheme(event.target.value as Theme)}
-        className="rounded-md border border-hairline bg-surface px-2 py-1 text-xs text-ink-secondary"
-        aria-label="Тема оформления"
-      >
-        {(Object.keys(LABELS) as Theme[]).map((value) => (
-          <option key={value} value={value}>
-            {LABELS[value]}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className={SEGMENT_GROUP} role="group" aria-label={label}>
+      {THEMES.map((value) => {
+        const active = value === theme
+
+        return (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setTheme(value)}
+            // aria-pressed, а не только заливка: выбранный режим должен
+            // читаться вспомогательными технологиями, а не одним цветом.
+            aria-pressed={active}
+            title={labels[value]}
+            className={segmentClass(active)}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="size-4"
+              aria-hidden="true"
+            >
+              {ICONS[value]}
+            </svg>
+            <span className="sr-only">{labels[value]}</span>
+          </button>
+        )
+      })}
+    </div>
   )
 }

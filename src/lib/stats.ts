@@ -79,10 +79,12 @@ export async function getKpis(): Promise<Kpis> {
 }
 
 export type DailyRuns = {
-  /** Дата в формате YYYY-MM-DD. */
+  /**
+   * Дата в формате YYYY-MM-DD. Подпись оси строится из неё на отрисовке
+   * через `formatDayShort`: формат даты зависит от языка страницы, а SQL
+   * о выбранной локали не знает.
+   */
   day: string
-  /** Подпись для оси X, например «29.07». */
-  label: string
   success: number
   failed: number
 }
@@ -94,7 +96,6 @@ export type DailyRuns = {
 export async function getDailyRuns(days = 14): Promise<DailyRuns[]> {
   const result = await db.execute<{
     day: string
-    label: string
     success: number
     failed: number
   }>(sql`
@@ -107,7 +108,6 @@ export async function getDailyRuns(days = 14): Promise<DailyRuns[]> {
     )
     select
       to_char(d.day, 'YYYY-MM-DD')                                     as day,
-      to_char(d.day, 'DD.MM')                                          as label,
       count(r.id) filter (where r.status = 'success')::int              as success,
       count(r.id) filter (where r.status = 'failed')::int               as failed
     from days d
