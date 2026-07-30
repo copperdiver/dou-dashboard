@@ -603,6 +603,11 @@ export const llmCache = pgTable(
 
 export const coverageEnum = pgEnum('day_coverage', ['covered', 'missing', 'no_edition'])
 
+/**
+ * Возрастные группы. Значения здесь и границы в AGE_BUCKET_SQL
+ * (src/worker/pumps/rollup.ts) — единственное определение; менять их
+ * нужно в паре, иначе вставка в витрину упадёт на приведении к enum.
+ */
 export const ageBucketEnum = pgEnum('age_bucket', [
   '0-17',
   '18-24',

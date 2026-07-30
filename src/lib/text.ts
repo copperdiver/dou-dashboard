@@ -101,16 +101,11 @@ export function ageOn(birthDate: string, onDate: string): number | null {
   return age >= 0 && age < 130 ? age : null
 }
 
-export const AGE_BUCKETS = ['0-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+'] as const
-
-export type AgeBucketValue = (typeof AGE_BUCKETS)[number]
-
-export function ageBucket(age: number): AgeBucketValue {
-  if (age < 18) return '0-17'
-  if (age < 25) return '18-24'
-  if (age < 35) return '25-34'
-  if (age < 45) return '35-44'
-  if (age < 55) return '45-54'
-  if (age < 65) return '55-64'
-  return '65+'
-}
+/*
+ * Возрастных групп здесь нет сознательно. Границы заданы один раз —
+ * в SQL насоса витрин (src/worker/pumps/rollup.ts, AGE_BUCKET_SQL) плюс
+ * перечисление значений в `age_bucket` в схеме. Дублировать их функцией
+ * на TypeScript значило бы держать два определения одних и тех же границ,
+ * которые неизбежно разойдутся: UI читает готовые группы из витрины,
+ * пересчитывать их ему не нужно.
+ */

@@ -15,6 +15,7 @@ import { enrichReasons } from './pumps/enrich'
 import { enumerate } from './pumps/enumerate'
 import { fetchPages } from './pumps/fetch'
 import { parsePages } from './pumps/parse'
+import { rollupDays } from './pumps/rollup'
 import type { Pump } from './pumps/types'
 import type { QueueKey } from './queue'
 
@@ -70,6 +71,12 @@ export const SCHEDULE: readonly ScheduledJob[] = [
     pattern: '*/10 * * * *',
     description: 'Обогащение остатка причин через LLM',
   },
+  {
+    name: 'rollup',
+    queue: 'jobs',
+    pattern: '*/5 * * * *',
+    description: 'Пересчёт суточных витрин по затронутым дням',
+  },
 ] as const
 
 export const handlers: Record<string, Pump> = {
@@ -83,4 +90,5 @@ export const handlers: Record<string, Pump> = {
   parse: parsePages,
   canonize: canonizeReasons,
   enrich: enrichReasons,
+  rollup: rollupDays,
 }
