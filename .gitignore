@@ -1,0 +1,28 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# env: игнорируется всё семейство, кроме шаблона.
+# Шире, чем перечисление конкретных имён: резервная копия вида
+# `.env.bak.1785390869` под `.env.local`/`.env.*.local` не попадала бы
+# и утекла бы в коммит вместе с ключами.
+.env
+.env.*
+!.env.example
+
+# логи
+*.log
+npm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# прочее
+*.tsbuildinfo
+next-env.d.ts
+coverage/

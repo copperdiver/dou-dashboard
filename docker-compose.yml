@@ -1,0 +1,124 @@
+name: dou-dashboard
+
+# Полный стек: Postgres, Redis, миграции, Next.js и воркер фоновых задач.
+#   docker compose up -d --build
+
+x-app-env: &app-env
+  NODE_ENV: production
+  TZ: ${TZ:-Europe/Moscow}
+  DATABASE_URL: postgres://${POSTGRES_USER:-dou}:${POSTGRES_PASSWORD:-dou}@postgres:5432/${POSTGRES_DB:-dou_dashboard}
+  REDIS_URL: redis://redis:6379
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dou}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dou}
+      POSTGRES_DB: ${POSTGRES_DB:-dou_dashboard}
+      TZ: ${TZ:-Europe/Moscow}
+      # Часовой пояс сессий: от него зависит группировка статистики по суткам.
+      PGTZ: ${TZ:-Europe/Moscow}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-dou} -d ${POSTGRES_DB:-dou_dashboard}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # Одноразовый сервис: применяет миграции, заливает справочники и завершается.
+  # web и worker ждут его успешного выхода — так на старте нет гонки за схему.
+  # Справочники стран и штатов не демо-данные: без них не работает
+  # сопоставление country_raw/state_raw, поэтому они часть развёртывания.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    command:
+      - sh
+      - -c
+      - ./node_modules/.bin/tsx src/db/migrate.ts && ./node_modules/.bin/tsx src/db/seed-reference.ts
+    restart: 'no'
+    environment: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *app-env
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_LLM_CONCURRENCY: ${WORKER_LLM_CONCURRENCY:-1}
+      DOU_USER_AGENT: ${DOU_USER_AGENT:-}
+      DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
+      DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
+      DOU_SECTIONS: ${DOU_SECTIONS:-do1}
+      DISCOVER_LOOKBACK_DAYS: ${DISCOVER_LOOKBACK_DAYS:-7}
+      ENUMERATE_BATCH: ${ENUMERATE_BATCH:-5}
+      FETCH_BATCH: ${FETCH_BATCH:-10}
+      BACKFILL_DAYS: ${BACKFILL_DAYS:-365}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL_CLAUDE: ${LLM_MODEL_CLAUDE:-}
+      LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-}
+      # Ключи берутся из .env и внутрь образа не попадают.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  redis-data:

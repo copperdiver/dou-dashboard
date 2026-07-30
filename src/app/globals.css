@@ -1,0 +1,208 @@
+@import "tailwindcss";
+
+/*
+ * Палитра дашборда — восемь категориальных слотов в фиксированном порядке.
+ *
+ * Порядок слотов и есть механизм защиты от дальтонизма: он подобран так,
+ * чтобы соседние пары расходились по ΔE, и переставлять его нельзя.
+ * Прогон валидатора против наших поверхностей: обе темы проходят все
+ * проверки, худшая соседняя пара по CVD — ΔE 9.1 в светлой и 8.4 в тёмной
+ * при пороге 8.
+ *
+ * В светлой теме слоты 3, 4 и 5 (бирюзовый, жёлтый, маджента) не дотягивают
+ * до контраста 3:1 к поверхности. Это разрешено только с компенсацией,
+ * поэтому каждый категориальный график обязан нести легенду со значениями
+ * и раскрываемую таблицу — цвет никогда не единственный носитель смысла.
+ *
+ * Статусные цвета в серии не годятся: красно-зелёная пара даёт ΔE 4.1 при
+ * дейтеранопии. Они живут только в бейджах и всегда идут с иконкой и текстом.
+ */
+:root {
+  color-scheme: light;
+
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --hairline: rgba(11, 11, 11, 0.1);
+
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  /*
+   * Тинты плиток KPI. Это цвет поверхности, а не данных: смысл несёт
+   * значение на плитке, а не её фон. Контраст основного текста на каждом
+   * тинте — 17:1, вторичного — 7:1.
+   */
+  --tint-1: #e8f1fc;
+  --tint-2: #fdeee7;
+  --tint-3: #e4f6ef;
+  --tint-4: #fdf3e0;
+
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+  --delta-good: #006300;
+
+  /* Высота нижней панели вкладок: на неё отступает содержимое страницы. */
+  --nav-h: 3.5rem;
+
+  /*
+   * Ширина бокового меню на десктопе. Живёт переменной, потому что от неё
+   * зависит и само меню, и левый отступ содержимого: два числа в разных
+   * местах разъехались бы при первой же правке.
+   */
+  --nav-w: 13rem;
+}
+
+/* Свёрнутое меню — одни иконки. */
+:root[data-nav="collapsed"] {
+  --nav-w: 4rem;
+}
+
+/*
+ * Тёмные значения объявлены дважды: media-запрос ловит настройку системы,
+ * scope [data-theme] — выбор пользователя, и он обязан побеждать в обе
+ * стороны. Guard :not([data-theme="light"]) даёт светлой метке перебить
+ * системную тёмную, а :where() держит вес media-блока ниже переключателя.
+ * Тёмные шаги серий — не «осветлённые» светлые, а отдельно подобранный
+ * набор под тёмную поверхность; менять их можно только парой.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --hairline: rgba(255, 255, 255, 0.1);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --tint-1: #16283f;
+    --tint-2: #3a2118;
+    --tint-3: #10332a;
+    --tint-4: #33280f;
+
+    --delta-good: #0ca30c;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --hairline: rgba(255, 255, 255, 0.1);
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --tint-1: #16283f;
+  --tint-2: #3a2118;
+  --tint-3: #10332a;
+  --tint-4: #33280f;
+
+  --delta-good: #0ca30c;
+}
+
+@theme inline {
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-page: var(--page);
+  --color-surface: var(--surface-1);
+  --color-ink: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+  --color-grid: var(--grid);
+  --color-axis: var(--axis);
+  --color-hairline: var(--hairline);
+
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
+
+  --color-tint-1: var(--tint-1);
+  --color-tint-2: var(--tint-2);
+  --color-tint-3: var(--tint-3);
+  --color-tint-4: var(--tint-4);
+
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-critical: var(--status-critical);
+  --color-delta-good: var(--delta-good);
+}
+
+/*
+ * Знак студии в двух вариантах: тёмно-серый для светлой темы, золотой для
+ * тёмной. Оба — одна и та же альфа-маска, отличается только цвет заливки.
+ * Переключение объявлено в тех же трёх областях, что и палитра, чтобы
+ * выбор пользователя побеждал системную настройку.
+ */
+.logo-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .logo-light {
+    display: none;
+  }
+  :root:where(:not([data-theme="light"])) .logo-dark {
+    display: inline-block;
+  }
+}
+
+:root[data-theme="dark"] .logo-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .logo-dark {
+  display: inline-block;
+}
+
+html {
+  background-color: var(--page);
+}
+
+body {
+  background-color: var(--page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}

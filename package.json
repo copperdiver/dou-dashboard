@@ -1,0 +1,52 @@
+{
+  "name": "dou-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "worker": "tsx --env-file-if-exists=.env src/worker/index.ts",
+    "worker:dev": "tsx watch --env-file-if-exists=.env src/worker/index.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx --env-file-if-exists=.env src/db/migrate.ts",
+    "db:studio": "drizzle-kit studio",
+    "db:seed-reference": "tsx --env-file-if-exists=.env src/db/seed-reference.ts",
+    "backfill": "tsx --env-file-if-exists=.env scripts/backfill.ts",
+    "pump": "tsx --env-file-if-exists=.env scripts/run-pump.ts",
+    "generate:countries": "tsx scripts/generate-countries.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "bullmq": "^5.81.2",
+    "drizzle-orm": "^0.45.2",
+    "flag-icons": "^7.5.0",
+    "ioredis": "^5.11.1",
+    "next": "16.2.12",
+    "openai": "^7.1.0",
+    "pg": "^8.22.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tsx": "^4.23.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.13.3",
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "16.2.12",
+    "i18n-iso-countries": "^7.14.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3"
+  }
+}
