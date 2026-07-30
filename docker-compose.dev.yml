@@ -1,0 +1,47 @@
+name: dou-dashboard-dev
+
+# Только инфраструктура — Next.js и воркер запускаются на хосте:
+#   docker compose -f docker-compose.dev.yml up -d
+#   npm run db:migrate && npm run db:seed-reference
+#   npm run dev        # в одном терминале
+#   npm run worker:dev # во втором
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dou}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dou}
+      POSTGRES_DB: ${POSTGRES_DB:-dou_dashboard}
+      TZ: ${TZ:-Europe/Moscow}
+      PGTZ: ${TZ:-Europe/Moscow}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-dou} -d ${POSTGRES_DB:-dou_dashboard}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis-dev-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-dev-data:
+  redis-dev-data:

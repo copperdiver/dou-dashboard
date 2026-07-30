@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# env
+.env
+.env.local
+.env.*.local
+
+# логи
+*.log
+npm-debug.log*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# прочее
+*.tsbuildinfo
+next-env.d.ts
+coverage/
