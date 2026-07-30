@@ -24,6 +24,7 @@
     "generate:countries": "tsx scripts/generate-countries.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "bullmq": "^5.81.2",
     "drizzle-orm": "^0.45.2",
     "ioredis": "^5.11.1",

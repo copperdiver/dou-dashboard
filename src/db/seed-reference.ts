@@ -12,7 +12,8 @@
  * и штатов, поэтому скрипт входит в обычный порядок развёртывания.
  */
 import { eq, sql } from 'drizzle-orm'
-import { normalizeCountryName, normalizeKey, normalizeReasonText } from '../lib/text'
+import { reasonDedupKey } from '../lib/reasons/normalize'
+import { normalizeCountryName, normalizeKey } from '../lib/text'
 import { closePool, db } from './client'
 import {
   brStateAliases,
@@ -171,7 +172,7 @@ async function seedReasons(): Promise<void> {
     }
     values.push({
       slug: r.slug,
-      normalizedKey: normalizeReasonText(r.textPt),
+      normalizedKey: reasonDedupKey(r.textPt).textNorm,
       textPt: r.textPt,
       textEn: r.textEn,
       textRu: r.textRu,

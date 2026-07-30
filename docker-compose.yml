@@ -105,6 +105,9 @@ services:
       ENUMERATE_BATCH: ${ENUMERATE_BATCH:-5}
       FETCH_BATCH: ${FETCH_BATCH:-10}
       BACKFILL_DAYS: ${BACKFILL_DAYS:-365}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL: ${LLM_MODEL:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

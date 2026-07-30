@@ -9,7 +9,9 @@
  * Чтобы добавить насос: описать его в SCHEDULE и добавить обработчик
  * в handlers под тем же именем. Расписание синхронизируется при старте.
  */
+import { canonizeReasons } from './pumps/canonize'
 import { discover } from './pumps/discover'
+import { enrichReasons } from './pumps/enrich'
 import { enumerate } from './pumps/enumerate'
 import { fetchPages } from './pumps/fetch'
 import { parsePages } from './pumps/parse'
@@ -56,6 +58,18 @@ export const SCHEDULE: readonly ScheduledJob[] = [
     pattern: '*/5 * * * *',
     description: 'Разбор страниц: акты, люди, решения',
   },
+  {
+    name: 'canonize',
+    queue: 'jobs',
+    pattern: '*/5 * * * *',
+    description: 'Канонизация причин отказа правилами',
+  },
+  {
+    name: 'enrich',
+    queue: 'llm',
+    pattern: '*/10 * * * *',
+    description: 'Обогащение остатка причин через LLM',
+  },
 ] as const
 
 export const handlers: Record<string, Pump> = {
@@ -67,4 +81,6 @@ export const handlers: Record<string, Pump> = {
   enumerate,
   fetch: fetchPages,
   parse: parsePages,
+  canonize: canonizeReasons,
+  enrich: enrichReasons,
 }

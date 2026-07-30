@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { db } from '../../db/client'
 import {
   acts,
@@ -7,15 +7,17 @@ import {
   countryAliases,
   denials,
   dirtyDays,
+  reasonTexts,
   sourcePageHtml,
   sourcePages,
 } from '../../db/schema'
+import { reasonDedupKey } from '../../lib/reasons/normalize'
 import { splitActs } from '../../lib/dou/acts'
 import { extractApprovals } from '../../lib/dou/approvals'
 import { extractDenials } from '../../lib/dou/denials'
 import { extractBlocks } from '../../lib/dou/page'
 import { pipelineConfig } from '../../lib/env'
-import { ageOn, normalizeCountryName, normalizeKey, normalizeName } from '../../lib/text'
+import { ageOn, normalizeCountryName, normalizeKey, normalizeName, sha256Hex } from '../../lib/text'
 import type { Pump } from './types'
 
 /**
@@ -249,6 +251,42 @@ export const parsePages: Pump = async ({ log }) => {
           pageUnparsed += unparsed.length
 
           if (parsed.length > 0) {
+            /*
+             * Текст причины дедуплицируется в reason_texts: одинаковые
+             * тексты канонизируются и уходят в LLM один раз, а не по
+             * разу на каждый отказ (замер: 267 отказов → 203 текста).
+             * Здесь считается только дешёвый ключ, без правил, поэтому
+             * рост RULES_VERSION не требует переразбора страниц.
+             */
+            const textIdByHash = new Map<string, string>()
+            for (const denial of parsed) {
+              if (!denial.reasonText) continue
+              const { textNorm } = reasonDedupKey(denial.reasonText)
+              if (textNorm.length === 0) continue
+              const hash = sha256Hex(textNorm)
+              if (textIdByHash.has(hash)) continue
+
+              const [textRow] = await tx
+                .insert(reasonTexts)
+                .values({
+                  textRaw: denial.reasonText,
+                  textNorm,
+                  normSha256: hash,
+                  occurrences: 1,
+                })
+                // rules_version при повторной встрече не сбрасывается:
+                // иначе уже канонизированный текст переразбирался бы вечно.
+                // occurrences здесь не трогаем — он пересчитывается ниже
+                // из фактических связей.
+                .onConflictDoUpdate({
+                  target: reasonTexts.normSha256,
+                  set: { textRaw: sql`${reasonTexts.textRaw}` },
+                })
+                .returning({ id: reasonTexts.id })
+
+              if (textRow) textIdByHash.set(hash, textRow.id)
+            }
+
             const values = parsed.map((denial) => ({
               actId: row.id,
               pageId: claim.id,
@@ -270,6 +308,9 @@ export const parsePages: Pump = async ({ log }) => {
               processNumberNorm: denial.processNumberNorm,
               fullName: denial.fullName,
               nameNorm: normalizeName(denial.fullName),
+              reasonTextId: denial.reasonText
+                ? (textIdByHash.get(sha256Hex(reasonDedupKey(denial.reasonText).textNorm)) ?? null)
+                : null,
               parserVersion: PARSER_VERSION,
               retiredAt: null,
             }))
@@ -290,12 +331,37 @@ export const parsePages: Pump = async ({ log }) => {
                   processNumberNorm: sql`excluded.process_number_norm`,
                   fullName: sql`excluded.full_name`,
                   nameNorm: sql`excluded.name_norm`,
+                  reasonTextId: sql`excluded.reason_text_id`,
                   parserVersion: sql`excluded.parser_version`,
                   retiredAt: sql`null`,
                 },
               })
 
             denialsTotal += values.length
+
+            /*
+             * occurrences — производная величина, а не счётчик приращений.
+             * Инкремент здесь давал бы неверное число дважды: внутри
+             * страницы один текст встречается у нескольких отказов, а при
+             * переразборе прибавка легла бы поверх старой. Пересчёт из
+             * фактических связей всегда верен и идемпотентен.
+             */
+            const textIds = [...textIdByHash.values()]
+            if (textIds.length > 0) {
+              const counts = await tx
+                .select({ id: denials.reasonTextId, count: sql<number>`count(*)::int` })
+                .from(denials)
+                .where(and(inArray(denials.reasonTextId, textIds), isNull(denials.retiredAt)))
+                .groupBy(denials.reasonTextId)
+
+              for (const entry of counts) {
+                if (!entry.id) continue
+                await tx
+                  .update(reasonTexts)
+                  .set({ occurrences: entry.count })
+                  .where(eq(reasonTexts.id, entry.id))
+              }
+            }
           }
         }
       }

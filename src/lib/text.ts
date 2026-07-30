@@ -48,6 +48,12 @@ export function normalizeName(value: string): string {
   )
 }
 
+/*
+ * Нормализация текста причины отказа живёт в src/lib/reasons/normalize.ts
+ * (`reasonDedupKey`): там она нужна вместе с сохранением смещений для
+ * спанов-доказательств, и две реализации неизбежно разошлись бы.
+ */
+
 /**
  * Предлог перед названием страны в DOU: `natural da Colômbia`,
  * `natural do Haiti`, `natural de Marrocos`, `natural dos Estados Unidos`.
@@ -57,27 +63,6 @@ const COUNTRY_PREPOSITION = /^(?:d[aeo]s?|d')\s+/i
 
 export function normalizeCountryName(value: string): string {
   return normalizeKey(value.replace(COUNTRY_PREPOSITION, ''))
-}
-
-/**
- * Преамбула, присутствующая почти в каждом тексте причины отказа.
- * Смысла не несёт, но забивает и похожесть, и промпт LLM.
- */
-const REASON_PREAMBLE =
-  /^\s*a\s+coordenadora\s+de\s+processos\s+migratorios[^,]*,\s*no\s+uso\s+da\s+competencia\s+delegada[^,]*,\s*(?:publicada\s+no\s+diario\s+oficial\s+da\s+uniao[^,]*,\s*)?/i
-
-/**
- * Нормализация текста причины отказа: снимает диакритику и регистр,
- * маскирует цифровые серии (номера законов, статей, дат — они уходят
- * в legalRefs отдельным разбором) и срезает преамбулу.
- *
- * Маскировка цифр обязательна: 282 уникальных текста из 355 отличаются
- * в основном номерами и пробелами, а шаблонов всего 6.
- */
-export function normalizeReasonText(value: string): string {
-  const flattened = collapseWhitespace(stripDiacritics(value).toLowerCase())
-  const withoutPreamble = flattened.replace(REASON_PREAMBLE, '')
-  return collapseWhitespace(withoutPreamble.replace(/\d+/g, '#'))
 }
 
 /**
