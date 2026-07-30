@@ -24,10 +24,15 @@ export function generateStaticParams() {
 
 /*
  * Канонический адрес и hreflang выводятся только при заданном
- * NEXT_PUBLIC_SITE_URL: иначе Next подставил бы localhost, а неверный
- * hreflang хуже отсутствующего.
+ * SITE_URL: иначе Next подставил бы localhost, а неверный hreflang хуже
+ * отсутствующего.
+ *
+ * Имя без префикса NEXT_PUBLIC_ намеренно: такие переменные Next
+ * подставляет на этапе сборки, и задать их в compose на сервере было бы
+ * нельзя. Значение читается только серверным `generateMetadata`, поэтому
+ * остаётся обычной переменной окружения — и меняется без пересборки образа.
  */
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL
+const SITE_URL = process.env.SITE_URL
 
 export async function generateMetadata({
   params,
