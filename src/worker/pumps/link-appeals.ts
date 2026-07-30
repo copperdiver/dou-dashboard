@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { db } from '../../db/client'
-import { denials, dirtyDays } from '../../db/schema'
+import { approvals, denials, dirtyDays } from '../../db/schema'
 import type { Pump } from './types'
 
 /**
@@ -121,6 +121,57 @@ async function recomputeCounts(): Promise<string[]> {
   return result.rows.map((r) => r.edition_date)
 }
 
+/**
+ * Повторные публикации одобрений.
+ *
+ * Зеркало `markRepublications` для отказов: DOU публикует одну и ту же
+ * portaria дважды под разными идентификаторами и в разные дни выпуска.
+ * Наблюдалось: процесс 235881.0396673/2023 (BRIGILIEN BRIGIL) вышел
+ * трижды, причём дважды это была одна и та же portaria № 6.738 от 2 июля.
+ *
+ * Сопоставление только по номеру процесса, как и у отказов: связывать по
+ * именам нельзя из-за тёзок, а ложное объединение двух разных людей хуже
+ * пропущенного дубля.
+ *
+ * Записи без номера процесса не трогаются: у них нет надёжного ключа,
+ * и считать их повторами по совпадению имени было бы догадкой.
+ */
+async function markApprovalRepublications(): Promise<string[]> {
+  const result = await db.execute<{ edition_date: string }>(sql`
+    with ranked as (
+      select id,
+             row_number() over (
+               partition by process_number_norm
+               order by edition_date, ordinal, id
+             ) as seq
+        from ${approvals}
+       where retired_at is null
+         and process_number_norm is not null
+    )
+    update ${approvals} a
+       set is_republication = (r.seq > 1)
+      from ranked r
+     where a.id = r.id
+       and a.is_republication is distinct from (r.seq > 1)
+    returning to_char(a.edition_date, 'YYYY-MM-DD') as edition_date
+  `)
+
+  return result.rows.map((r) => r.edition_date)
+}
+
+/** Пересчёт материализованного флага «считается новым одобрением». */
+async function recomputeApprovalCounts(): Promise<string[]> {
+  const result = await db.execute<{ edition_date: string }>(sql`
+    update ${approvals} a
+       set counts_as_new_approval = not a.is_republication
+     where a.retired_at is null
+       and a.counts_as_new_approval is distinct from (not a.is_republication)
+    returning to_char(a.edition_date, 'YYYY-MM-DD') as edition_date
+  `)
+
+  return result.rows.map((r) => r.edition_date)
+}
+
 export const linkAppealsAndRepublications: Pump = async ({ log }) => {
   const republications = await markRepublications()
   const appeals = await linkAppeals()
@@ -128,7 +179,19 @@ export const linkAppealsAndRepublications: Pump = async ({ log }) => {
   // поэтому пересчитывается последним.
   const counts = await recomputeCounts()
 
-  const touchedDays = [...new Set([...republications, ...appeals, ...counts])]
+  // То же самое для одобрений — тем же порядком и по той же причине.
+  const approvalRepublications = await markApprovalRepublications()
+  const approvalCounts = await recomputeApprovalCounts()
+
+  const touchedDays = [
+    ...new Set([
+      ...republications,
+      ...appeals,
+      ...counts,
+      ...approvalRepublications,
+      ...approvalCounts,
+    ]),
+  ]
 
   if (touchedDays.length > 0) {
     await db
@@ -157,6 +220,8 @@ export const linkAppealsAndRepublications: Pump = async ({ log }) => {
   log(
     `повторных публикаций изменено ${republications.length}, ` +
       `апелляций связано ${appeals.length}, флагов пересчитано ${counts.length}, ` +
+      `повторов одобрений ${approvalRepublications.length}, ` +
+      `флагов одобрений ${approvalCounts.length}, ` +
       `подтверждений без первичного решения ${orphans?.orphans ?? 0} из ${orphans?.upheld ?? 0}`,
   )
 
@@ -166,6 +231,8 @@ export const linkAppealsAndRepublications: Pump = async ({ log }) => {
       republications: republications.length,
       appealsLinked: appeals.length,
       countsRecomputed: counts.length,
+      approvalRepublications: approvalRepublications.length,
+      approvalCountsRecomputed: approvalCounts.length,
       daysMarked: touchedDays.length,
       upheldTotal: orphans?.upheld ?? 0,
       upheldWithoutPrimary: orphans?.orphans ?? 0,

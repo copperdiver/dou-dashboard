@@ -15,6 +15,13 @@
       "when": 1785381476779,
       "tag": "0001_unknown_obadiah_stane",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785433307332,
+      "tag": "0002_approval_republications",
+      "breakpoints": true
     }
   ]
 }

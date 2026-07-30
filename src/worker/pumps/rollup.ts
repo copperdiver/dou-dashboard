@@ -115,8 +115,12 @@ export const rollupDays: Pump = async ({ log }) => {
         acts: number
       }>(sql`
         select
+          -- Определение «нового одобрения» живёт в counts_as_new_approval:
+          -- повторная публикация той же portaria в него не входит, иначе
+          -- один человек считался бы дважды.
           (select count(*)::int from ${approvals}
-            where edition_date = ${day} and retired_at is null)                      as approvals,
+            where edition_date = ${day} and retired_at is null
+              and counts_as_new_approval)                                            as approvals,
           -- Определение «нового отказа» живёт в counts_as_new_denial:
           -- подтверждение при обжаловании и повторная публикация в него
           -- не входят, иначе статистика удвоилась бы.
@@ -169,7 +173,8 @@ export const rollupDays: Pump = async ({ log }) => {
         insert into ${dailyCountryStats} (day, country_id, approvals)
         select ${day}::date, country_id, count(*)::int
           from ${approvals}
-         where edition_date = ${day} and retired_at is null and country_id is not null
+         where edition_date = ${day} and retired_at is null and counts_as_new_approval
+           and country_id is not null
          group by country_id
       `)
 
@@ -178,7 +183,8 @@ export const rollupDays: Pump = async ({ log }) => {
         insert into ${dailyStateStats} (day, state_id, approvals)
         select ${day}::date, state_id, count(*)::int
           from ${approvals}
-         where edition_date = ${day} and retired_at is null and state_id is not null
+         where edition_date = ${day} and retired_at is null and counts_as_new_approval
+           and state_id is not null
          group by state_id
       `)
 
@@ -187,7 +193,7 @@ export const rollupDays: Pump = async ({ log }) => {
         insert into ${dailyAgeBucketStats} (day, bucket, approvals)
         select ${day}::date, (${AGE_BUCKET_SQL})::age_bucket, count(*)::int
           from ${approvals}
-         where edition_date = ${day} and retired_at is null
+         where edition_date = ${day} and retired_at is null and counts_as_new_approval
            and age_at_publication is not null
          group by 2
       `)

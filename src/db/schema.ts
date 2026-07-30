@@ -334,12 +334,30 @@ export const approvals = pgTable(
     /** 1.0 — все поля извлечены; ниже — часть отсутствует в источнике. */
     parseConfidence: numeric('parse_confidence', { precision: 3, scale: 2 }),
     parserVersion: integer('parser_version').notNull().default(1),
+    /**
+     * Повторная публикация: та же portaria по тому же процессу вышла
+     * раньше. Наблюдалось, что DOU публикует один документ дважды под
+     * разными идентификаторами и в разные дни выпуска.
+     */
+    isRepublication: boolean('is_republication').notNull().default(false),
+    /**
+     * Считается новым одобрением. Зеркало `counts_as_new_denial`: без
+     * него повторные публикации удваивали счётчик, а у отказов такой
+     * защиты уже была, у одобрений — нет.
+     */
+    countsAsNewApproval: boolean('counts_as_new_approval').notNull().default(true),
     /** Мягкое удаление: при переразборе запись не исчезает бесследно. */
     retiredAt: timestamp('retired_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('approvals_act_paragraph_key').on(t.actId, t.paragraphSha256),
-    index('approvals_feed_idx').on(t.editionDate.desc(), t.id.desc()).where(sql`${t.retiredAt} is null`),
+    // Основной фид: только новые одобрения, как и у отказов.
+    index('approvals_feed_idx')
+      .on(t.editionDate.desc(), t.id.desc())
+      .where(sql`${t.countsAsNewApproval} and ${t.retiredAt} is null`),
+    // Отдельный индекс под выдачу без отсечения повторов.
+    index('approvals_all_feed_idx').on(t.editionDate.desc(), t.id.desc()),
+    index('approvals_process_idx').on(t.processNumberNorm, t.editionDate),
     index('approvals_country_idx').on(t.countryId, t.editionDate.desc(), t.id.desc()),
     index('approvals_state_idx').on(t.stateId, t.editionDate.desc(), t.id.desc()),
     index('approvals_page_idx').on(t.pageId),

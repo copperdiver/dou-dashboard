@@ -29,9 +29,62 @@ import type { Pump } from './types'
  * сохраняются.
  */
 
+/** Сколько отказов чинить за прогон. */
+const BACKFILL_BATCH = 500
+
 type Claim = {
   id: string
   textRaw: string
+}
+
+/**
+ * Достраивает связи отказов с причинами там, где текст уже разобран,
+ * а отказ остался без строк в `denial_reasons`.
+ *
+ * Так получается штатно: текст берётся в работу один раз на версию правил
+ * (см. `claimTexts`), и `syncDenialReasons` раскладывает причины только
+ * в этот момент. Отказ, разобранный ПОЗЖЕ своей причины, ссылается на уже
+ * обработанный текст, повторно тот не претендуется — и связи не появляются
+ * никогда. На замере так осталось 850 отказов: причины у них определены,
+ * но ни в карточку, ни в категории они не попадали.
+ *
+ * Проход идемпотентен и дешёв, поэтому выполняется на каждом прогоне: это
+ * не разовая починка, а страховка от той же гонки в будущем.
+ *
+ * Отказы, у текста которых не нашлось ни одной причины, сюда не попадают —
+ * их не «чинить» надо, а классифицировать, и это работа насоса enrich.
+ * Без этого условия они возвращались бы в выборку каждый прогон и мешали
+ * дойти до чинимых.
+ */
+async function backfillDenialReasons(limit: number): Promise<{ links: number; days: string[] }> {
+  const { rows } = await db.execute<{ edition_date: string }>(sql`
+    with orphans as (
+      select d.id, d.edition_date, d.reason_text_id
+        from ${denials} d
+       where d.retired_at is null
+         and d.reason_text_id is not null
+         and not exists (
+           select 1 from ${denialReasons} dr where dr.denial_id = d.id
+         )
+         and exists (
+           select 1 from ${reasonTextReasons} rtr
+            where rtr.reason_text_id = d.reason_text_id
+         )
+       limit ${limit}
+    ),
+    inserted as (
+      insert into ${denialReasons} (denial_id, reason_id, category_id, edition_date)
+      select o.id, rtr.reason_id, r.category_id, o.edition_date
+        from orphans o
+        join ${reasonTextReasons} rtr on rtr.reason_text_id = o.reason_text_id
+        join ${reasons} r on r.id = rtr.reason_id
+      on conflict do nothing
+      returning edition_date
+    )
+    select to_char(edition_date, 'YYYY-MM-DD') as edition_date from inserted
+  `)
+
+  return { links: rows.length, days: [...new Set(rows.map((r) => r.edition_date))] }
 }
 
 async function claimTexts(limit: number): Promise<Claim[]> {
@@ -58,7 +111,19 @@ async function claimTexts(limit: number): Promise<Claim[]> {
 export const canonizeReasons: Pump = async ({ log }) => {
   const { fetchBatch } = pipelineConfig()
   const claims = await claimTexts(fetchBatch * 5)
-  if (claims.length === 0) return { itemsProcessed: 0, meta: { texts: 0 } }
+
+  // Восстанавливающий проход идёт ДО досрочного выхода: когда все тексты
+  // разобраны, новых претензий нет, и внутри условия ниже он не запустился
+  // бы ни разу — а чинить надо именно в этом состоянии.
+  const repaired = await backfillDenialReasons(BACKFILL_BATCH)
+  if (repaired.days.length > 0) await markDirty(repaired.days)
+
+  if (claims.length === 0) {
+    return {
+      itemsProcessed: repaired.links,
+      meta: { texts: 0, backfilledLinks: repaired.links, backfilledDays: repaired.days.length },
+    }
+  }
 
   // Справочники читаются один раз на прогон.
   const [reasonRows, categoryRows] = await Promise.all([
@@ -156,7 +221,8 @@ export const canonizeReasons: Pump = async ({ log }) => {
 
   log(
     `текстов ${claims.length}, разобрано правилами ${resolved}, в LLM ${needsReview}, ` +
-      `связей ${links}, средняя доля покрытия ${(ratioSum / claims.length).toFixed(3)}`,
+      `связей ${links}, достроено связей ${repaired.links}, ` +
+      `средняя доля покрытия ${(ratioSum / claims.length).toFixed(3)}`,
   )
 
   return {
@@ -166,10 +232,23 @@ export const canonizeReasons: Pump = async ({ log }) => {
       resolved,
       needsReview,
       links,
+      backfilledLinks: repaired.links,
+      backfilledDays: repaired.days.length,
       unknownSlugs,
       coveredCharRatio: Number((ratioSum / claims.length).toFixed(3)),
     },
   }
+}
+
+/** Дни на пересчёт витрин. */
+async function markDirty(days: string[]): Promise<void> {
+  await db
+    .insert(dirtyDays)
+    .values(days.map((day) => ({ day, reason: 'canonize-backfill' })))
+    .onConflictDoUpdate({
+      target: dirtyDays.day,
+      set: { reason: sql`'canonize-backfill'`, markedAt: sql`now()` },
+    })
 }
 
 /**
