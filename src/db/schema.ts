@@ -159,6 +159,13 @@ export const sourcePages = pgTable(
     parseStatus: parseStatusEnum('parse_status').notNull().default('pending'),
     parsedAt: timestamp('parsed_at', { withTimezone: true }),
     parseError: text('parse_error'),
+    /*
+     * Попытки разбора со своим счётчиком и своей отсрочкой: `next_attempt_at`
+     * рядом принадлежит загрузке, и делить его между двумя насосами значило
+     * бы, что неудача разбора откладывает повторную загрузку.
+     */
+    parseAttempts: integer('parse_attempts').notNull().default(0),
+    parseNextAttemptAt: timestamp('parse_next_attempt_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('source_pages_url_title_key').on(t.urlTitle),
@@ -433,12 +440,17 @@ export const denials = pgTable(
   (t) => [
     uniqueIndex('denials_act_block_key').on(t.actId, t.blockOrdinal),
     /*
-     * `Código` уникален внутри акта, но НЕ глобально: одно и то же решение
-     * публикуется повторно (наблюдалось, что процесс попал в выпуск трижды),
-     * и глобальное ограничение отвергало бы законную повторную публикацию.
-     * Межактовые повторы — это `is_republication`, а не конфликт.
+     * `Código` НЕ уникален даже внутри акта — это подтверждено данными.
+     * В выпуске от 20.03.2026 код 727.407 стоит на двух разных решениях:
+     * одно про заявительницу и требование языка (ст. 65 III), другое про
+     * заявителя, судимости и язык (ст. 234 III и V). Такое встречается
+     * на 10 страницах из 886.
+     *
+     * Раньше здесь стоял уникальный индекс, и он останавливал разбор
+     * целиком. Настоящий ключ записи — `(act_id, block_ordinal)`, по нему
+     * и идёт upsert; индекс по коду нужен только для поиска.
      */
-    uniqueIndex('denials_act_codigo_key').on(t.actId, t.codigo).where(sql`${t.codigo} is not null`),
+    index('denials_act_codigo_idx').on(t.actId, t.codigo).where(sql`${t.codigo} is not null`),
     index('denials_feed_idx')
       .on(t.editionDate.desc(), t.id.desc())
       .where(sql`${t.countsAsNewDenial} and ${t.retiredAt} is null`),
