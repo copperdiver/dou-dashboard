@@ -14,6 +14,7 @@ import { discover } from './pumps/discover'
 import { enrichReasons } from './pumps/enrich'
 import { enumerate } from './pumps/enumerate'
 import { fetchPages } from './pumps/fetch'
+import { linkAppealsAndRepublications } from './pumps/link-appeals'
 import { parsePages } from './pumps/parse'
 import { rollupDays } from './pumps/rollup'
 import type { Pump } from './pumps/types'
@@ -72,6 +73,14 @@ export const SCHEDULE: readonly ScheduledJob[] = [
     description: 'Обогащение остатка причин через LLM',
   },
   {
+    name: 'link-appeals',
+    queue: 'jobs',
+    // Ночью: пересчёт полный по всей истории, и связь меняется только
+    // при появлении новых решений, то есть раз в несколько дней.
+    pattern: '23 2 * * *',
+    description: 'Связь подтверждений отказа с первичными и повторные публикации',
+  },
+  {
     name: 'rollup',
     queue: 'jobs',
     pattern: '*/5 * * * *',
@@ -90,5 +99,6 @@ export const handlers: Record<string, Pump> = {
   parse: parsePages,
   canonize: canonizeReasons,
   enrich: enrichReasons,
+  'link-appeals': linkAppealsAndRepublications,
   rollup: rollupDays,
 }
