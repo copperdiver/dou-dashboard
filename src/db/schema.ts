@@ -121,8 +121,10 @@ export const selectedByEnum = pgEnum('selected_by', ['hierarchy', 'keyword', 'bo
 
 export const fetchStatusEnum = pgEnum('fetch_status', ['pending', 'fetched', 'gone', 'failed'])
 
+/** `running` — страница взята насосом разбора; аренда истекает по parsed_at. */
 export const parseStatusEnum = pgEnum('parse_status', [
   'pending',
+  'running',
   'ok',
   'partial',
   'schema_mismatch',
@@ -345,7 +347,18 @@ export const approvals = pgTable(
   ],
 )
 
-export const decisionKindEnum = pgEnum('decision_kind', ['denial', 'approval', 'void', 'other'])
+/**
+ * `archived` — `Arquivamento do pedido`: производство прекращено, а не
+ * отказано по существу. Отдельный вид нужен, чтобы такие решения не
+ * попадали в счётчик отказов.
+ */
+export const decisionKindEnum = pgEnum('decision_kind', [
+  'denial',
+  'approval',
+  'void',
+  'archived',
+  'other',
+])
 
 export const subjectKindEnum = pgEnum('subject_kind', [
   'naturalization',
@@ -401,7 +414,13 @@ export const denials = pgTable(
   },
   (t) => [
     uniqueIndex('denials_act_block_key').on(t.actId, t.blockOrdinal),
-    uniqueIndex('denials_codigo_key').on(t.codigo).where(sql`${t.codigo} is not null`),
+    /*
+     * `Código` уникален внутри акта, но НЕ глобально: одно и то же решение
+     * публикуется повторно (наблюдалось, что процесс попал в выпуск трижды),
+     * и глобальное ограничение отвергало бы законную повторную публикацию.
+     * Межактовые повторы — это `is_republication`, а не конфликт.
+     */
+    uniqueIndex('denials_act_codigo_key').on(t.actId, t.codigo).where(sql`${t.codigo} is not null`),
     index('denials_feed_idx')
       .on(t.editionDate.desc(), t.id.desc())
       .where(sql`${t.countsAsNewDenial} and ${t.retiredAt} is null`),

@@ -23,7 +23,7 @@ import {
   reasons,
 } from './schema'
 import { BR_STATE_ALIAS_SEED, BR_STATE_SEED } from './seeds/br-states'
-import { COUNTRY_ALIAS_SEED } from './seeds/country-aliases'
+import { COUNTRY_ALIAS_SEED, EXTRA_COUNTRY_SEED } from './seeds/country-aliases'
 import { COUNTRY_SEED } from './seeds/countries.generated'
 import { REASON_CATEGORY_SEED } from './seeds/reason-categories'
 import { REASON_SEED } from './seeds/reasons'
@@ -32,7 +32,7 @@ async function seedCountries(): Promise<Map<string, number>> {
   await db
     .insert(countries)
     .values(
-      COUNTRY_SEED.map((c) => ({
+      [...COUNTRY_SEED, ...EXTRA_COUNTRY_SEED].map((c) => ({
         iso2: c.iso2,
         iso3: c.iso3,
         namePt: c.namePt,
@@ -58,7 +58,7 @@ async function seedCountries(): Promise<Map<string, number>> {
   // нормализованному ключу, а не по точному совпадению строки.
   const aliases = new Map<string, { countryId: number; isAmbiguous: boolean; note: string | null }>()
 
-  for (const c of COUNTRY_SEED) {
+  for (const c of [...COUNTRY_SEED, ...EXTRA_COUNTRY_SEED]) {
     const id = byIso2.get(c.iso2)
     if (id === undefined) continue
     aliases.set(normalizeCountryName(c.namePt), { countryId: id, isAmbiguous: false, note: null })

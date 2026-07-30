@@ -12,6 +12,7 @@
 import { discover } from './pumps/discover'
 import { enumerate } from './pumps/enumerate'
 import { fetchPages } from './pumps/fetch'
+import { parsePages } from './pumps/parse'
 import type { Pump } from './pumps/types'
 import type { QueueKey } from './queue'
 
@@ -49,6 +50,12 @@ export const SCHEDULE: readonly ScheduledJob[] = [
     pattern: '*/5 * * * *',
     description: 'Загрузка страниц статей',
   },
+  {
+    name: 'parse',
+    queue: 'jobs',
+    pattern: '*/5 * * * *',
+    description: 'Разбор страниц: акты, люди, решения',
+  },
 ] as const
 
 export const handlers: Record<string, Pump> = {
@@ -59,4 +66,5 @@ export const handlers: Record<string, Pump> = {
   discover,
   enumerate,
   fetch: fetchPages,
+  parse: parsePages,
 }

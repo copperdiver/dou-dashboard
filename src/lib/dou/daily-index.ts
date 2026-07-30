@@ -108,6 +108,15 @@ export function parseDailyIndex(html: string): DailyIndex | null {
 const HIERARCHY_PATTERN = /Departamento de Migra|Processos Migrat|Naturaliza/i
 
 /**
+ * Трудовая миграция сидит в том же департаменте, но к натурализации
+ * отношения не имеет: это разрешения на работу для компаний
+ * (`Requerente: ... LTDA`, `Prazo: 2 Anos`, `Imigrante: ...`).
+ * Одна такая страница дала 548 абзацев и 15 актов чистого шума,
+ * поэтому исключается до загрузки, а не после разбора.
+ */
+const HIERARCHY_EXCLUDE = /Imigra[çc][ãa]o Laboral/i
+
+/**
  * Второй, бесплатный фильтр: ключевое слово в заголовке или сниппете.
  * Иерархия может пропустить релевантный акт другого департамента, а
  * `content` в индексе уже есть — расширять фильтр позже можно
@@ -131,7 +140,10 @@ export function selectRelevant(items: readonly DouIndexItem[]): SelectedItem[] {
   const selected: SelectedItem[] = []
 
   for (const item of items) {
-    const byHierarchy = HIERARCHY_PATTERN.test(item.hierarchyStr ?? '')
+    const hierarchy = item.hierarchyStr ?? ''
+    if (HIERARCHY_EXCLUDE.test(hierarchy)) continue
+
+    const byHierarchy = HIERARCHY_PATTERN.test(hierarchy)
     const byKeyword = KEYWORD_PATTERN.test(`${item.title ?? ''} ${item.content ?? ''}`)
 
     if (!byHierarchy && !byKeyword) continue

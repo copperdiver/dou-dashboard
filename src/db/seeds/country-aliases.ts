@@ -17,6 +17,24 @@ export type CountryAliasSeed = {
   note?: string
 }
 
+/**
+ * Строки, которых нет в ISO-3166, но которые встречаются в поле страны
+ * рождения. `ZZ` — код из зоны, зарезервированной ISO под собственные
+ * значения, поэтому он не столкнётся с настоящей страной.
+ *
+ * `Apátrida` — лицо без гражданства: это не страна, но и не ошибка
+ * разбора, поэтому оно должно перестать висеть в отчёте неопознанных.
+ */
+export const EXTRA_COUNTRY_SEED = [
+  {
+    iso2: 'ZZ',
+    iso3: null,
+    namePt: 'Apátrida',
+    nameEn: 'Stateless',
+    nameRu: 'Без гражданства',
+  },
+] as const
+
 export const COUNTRY_ALIAS_SEED: readonly CountryAliasSeed[] = [
   { alias: 'Belarus', iso2: 'BY', note: 'в ISO-3166 pt — Bielorrússia' },
   { alias: 'Benin', iso2: 'BJ', note: 'в ISO-3166 pt — Benim' },
@@ -32,4 +50,12 @@ export const COUNTRY_ALIAS_SEED: readonly CountryAliasSeed[] = [
   { alias: 'Irã', iso2: 'IR', note: 'в ISO-3166 pt — Irão' },
   { alias: 'Iêmen', iso2: 'YE', note: 'в ISO-3166 pt — Iémen' },
   { alias: 'Kuwait', iso2: 'KW', note: 'в ISO-3166 pt — Koweit' },
+
+  // Найдено после разбора первых 454 одобрений.
+  { alias: 'Russa', iso2: 'RU', note: 'прилагательная форма вместо Rússia' },
+  { alias: 'Palestina', iso2: 'PS' },
+  { alias: 'França Metropolitana', iso2: 'FR', note: 'метрополия Франции' },
+  { alias: 'Grã-Bretanha', iso2: 'GB' },
+  { alias: 'Grã-Betanha', iso2: 'GB', note: 'опечатка источника' },
+  { alias: 'Apátrida', iso2: 'ZZ', note: 'лицо без гражданства, не страна' },
 ] as const

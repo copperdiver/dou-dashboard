@@ -30,6 +30,15 @@ export function normalizeKey(value: string): string {
   return collapseWhitespace(stripDiacritics(value).toLowerCase())
 }
 
+/**
+ * Имя человека как отображаемое значение: снимает завершающую пунктуацию
+ * (в источнике встречается `LOUTFIA CHARIF SAID ALI.`) и лишние пробелы,
+ * но сохраняет диакритику и регистр.
+ */
+export function cleanPersonName(value: string): string {
+  return collapseWhitespace(value).replace(/[.,;:\s]+$/, '')
+}
+
 /** Ключ поиска по имени человека. Дополнительно убирает пунктуацию. */
 export function normalizeName(value: string): string {
   return collapseWhitespace(
@@ -72,14 +81,26 @@ export function normalizeReasonText(value: string): string {
 }
 
 /**
- * Номер процесса. В источнике встречаются `235881.0744976/2026`,
- * тот же номер с точкой на конце и форма с префиксом
- * `Naturalizar-se nº 235881.0744976/2026`.
+ * Номер процесса. В источнике сосуществуют два формата, замер на 17
+ * страницах: `235881.0744976/2026` (719 вхождений) и стандартный NUP
+ * `08000.038208/2025-70` (597). Плюс формы с префиксом
+ * `Naturalizar-se nº ...` и с точкой на конце.
+ *
+ * Порядок проверки важен: NUP длиннее и проверяется первым, иначе
+ * короткий шаблон отрезал бы у него контрольные цифры.
  */
+const PROCESS_PATTERNS: readonly RegExp[] = [
+  /\d{5}\.\d{6}\/\d{4}-\d{2}/,
+  /\d{6}\.\d{7}\/\d{4}/,
+]
+
 export function normalizeProcessNumber(value: string | null | undefined): string | null {
   if (!value) return null
-  const match = /\d{6}\.\d{7}\/\d{4}/.exec(value)
-  return match ? match[0] : null
+  for (const pattern of PROCESS_PATTERNS) {
+    const match = pattern.exec(value)
+    if (match) return match[0]
+  }
+  return null
 }
 
 /** Полный возраст на дату публикации. */
