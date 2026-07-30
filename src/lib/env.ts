@@ -11,6 +11,21 @@ function str(name: string, fallback: string): string {
   return value === undefined || value === '' ? fallback : value
 }
 
+/**
+ * Значение переменной или `undefined`, если она не задана либо пуста.
+ *
+ * Нужно именно так, а не через `??`: docker compose для незаданной
+ * переменной вида `${FOO:-}` подставляет ПУСТУЮ СТРОКУ, а `??`
+ * срабатывает только на null и undefined. Из-за этого имя модели
+ * становилось пустым и уходило в API как `model: ""`.
+ */
+export function optionalEnv(name: string): string | undefined {
+  const value = process.env[name]
+  if (value === undefined) return undefined
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
 function int(name: string, fallback: number): number {
   const raw = process.env[name]
   if (raw === undefined || raw === '') return fallback

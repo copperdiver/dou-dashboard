@@ -106,8 +106,11 @@ services:
       FETCH_BATCH: ${FETCH_BATCH:-10}
       BACKFILL_DAYS: ${BACKFILL_DAYS:-365}
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
-      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_MODEL_CLAUDE: ${LLM_MODEL_CLAUDE:-}
+      LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-}
+      # Ключи берутся из .env и внутрь образа не попадают.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy

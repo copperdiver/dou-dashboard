@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { EnrichInput, EnrichResult, ReasonCandidate, ReasonEnricher } from './types'
+import { optionalEnv } from '../env'
+import { buildSchema, buildStablePrefix, parseEnrichPayload, PROMPT_VERSION } from './prompt'
+import type { EnrichInput, EnrichResult, ReasonEnricher } from './types'
 
 /**
  * Обогащение причин отказа через Claude.
@@ -19,8 +21,6 @@ import type { EnrichInput, EnrichResult, ReasonCandidate, ReasonEnricher } from 
  *    остаток текста идёт в сообщение пользователя, а не в system.
  */
 
-const PROMPT_VERSION = 'reasons-1'
-
 const DEFAULT_MODEL = 'claude-opus-5'
 
 /**
@@ -39,47 +39,6 @@ type MessageLike = {
   content: { type: string; text?: string }[]
 }
 
-/** Схема ответа: структурированный вывод, а не парсинг прозы. */
-function buildSchema(categoryCodes: readonly string[], knownSlugs: readonly string[]) {
-  return {
-    type: 'object',
-    additionalProperties: false,
-    required: ['matched_slugs', 'new_reasons'],
-    properties: {
-      matched_slugs: {
-        type: 'array',
-        items: knownSlugs.length > 0 ? { type: 'string', enum: [...knownSlugs] } : { type: 'string' },
-      },
-      new_reasons: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['text_pt', 'text_en', 'text_ru', 'category_code'],
-          properties: {
-            text_pt: { type: 'string' },
-            text_en: { type: 'string' },
-            text_ru: { type: 'string' },
-            category_code: { type: 'string', enum: [...categoryCodes] },
-          },
-        },
-      },
-    },
-  }
-}
-
-const INSTRUCTIONS = `Você analisa despachos do Diário Oficial da União do Brasil sobre naturalização.
-
-Recebe o TRECHO de um despacho que ainda não foi classificado por regras determinísticas. A tarefa é decidir quais motivos de indeferimento esse trecho declara.
-
-Regras:
-1. Se o trecho corresponde a um motivo da lista de motivos conhecidos, devolva o slug dele em "matched_slugs". Prefira sempre reutilizar um motivo conhecido.
-2. Só crie um motivo em "new_reasons" quando nenhum motivo conhecido corresponder. Escreva o texto em português como uma formulação canônica curta e reutilizável — não copie o trecho inteiro, não inclua nomes, números de processo, datas nem citações de artigos de lei.
-3. Traduza cada motivo novo para inglês e russo. As traduções devem ser precisas: elas aparecem na interface ao lado do original.
-4. "category_code" só pode ser um dos códigos fornecidos.
-5. Referências a artigos de lei são CONTEXTO, não motivo. Não crie um motivo cujo texto seja apenas a citação de um artigo.
-6. Se o trecho não declara nenhum motivo (é apenas fórmula administrativa), devolva as duas listas vazias.`
-
 export class ClaudeEnricher implements ReasonEnricher {
   readonly name = 'claude'
   readonly model: string
@@ -90,10 +49,12 @@ export class ClaudeEnricher implements ReasonEnricher {
   private serverFallbackEnabled = true
 
   constructor(options: { apiKey?: string; model?: string } = {}) {
-    this.model = options.model ?? process.env.LLM_MODEL ?? DEFAULT_MODEL
+    // Модель задаётся отдельной переменной на провайдера: общий LLM_MODEL
+    // при переключении провайдера уехал бы в чужой API и дал бы там 404.
+    this.model = options.model ?? optionalEnv('LLM_MODEL_CLAUDE') ?? DEFAULT_MODEL
     // Клиент сам повторяет 429 и 5xx с экспоненциальной задержкой.
     this.client = new Anthropic({
-      apiKey: options.apiKey ?? process.env.ANTHROPIC_API_KEY,
+      apiKey: options.apiKey ?? optionalEnv('ANTHROPIC_API_KEY'),
       maxRetries: 3,
     })
   }
@@ -114,15 +75,7 @@ export class ClaudeEnricher implements ReasonEnricher {
 
     // Стабильный префикс: инструкции + справочники. Изменчивый остаток
     // уходит в сообщение пользователя, иначе кеш не переиспользуется.
-    const stablePrefix = [
-      INSTRUCTIONS,
-      '',
-      'Categorias permitidas:',
-      ...input.categories.map((c) => `- ${c.code}: ${c.nameEn}`),
-      '',
-      'Motivos conhecidos:',
-      ...input.known.map((k) => `- ${k.slug} [${k.categoryCode}]: ${k.textPt}`),
-    ].join('\n')
+    const stablePrefix = buildStablePrefix(input)
 
     try {
       const response = await this.request(stablePrefix, remainder, categoryCodes, knownSlugs)
@@ -154,7 +107,12 @@ export class ClaudeEnricher implements ReasonEnricher {
         cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
       }
 
-      const parsed = parseResponse(response.content, categoryCodes, knownSlugs)
+      const text = response.content
+        .filter((block) => block.type === 'text')
+        .map((block) => block.text ?? '')
+        .join('')
+
+      const parsed = parseEnrichPayload(text, categoryCodes, knownSlugs)
       if (parsed === null) {
         return {
           matchedSlugs: [],
@@ -242,61 +200,4 @@ function describeError(error: unknown): string {
   if (error instanceof Anthropic.APIConnectionError) return 'сеть недоступна'
   if (error instanceof Anthropic.APIError) return `ошибка API ${error.status ?? '?'}: ${error.message}`
   return error instanceof Error ? error.message : String(error)
-}
-
-type ParsedResponse = { matchedSlugs: string[]; newReasons: ReasonCandidate[] }
-
-/**
- * Разбирает ответ. Структурированный вывод гарантирует схему, но
- * значения всё равно перепроверяются: список категорий и slug'ов —
- * закрытый, и лишнее в базу попадать не должно.
- */
-function parseResponse(
-  content: readonly { type: string; text?: string }[],
-  categoryCodes: readonly string[],
-  knownSlugs: readonly string[],
-): ParsedResponse | null {
-  const text = content
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text ?? '')
-    .join('')
-    .trim()
-
-  if (text.length === 0) return null
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(text)
-  } catch {
-    return null
-  }
-
-  if (raw === null || typeof raw !== 'object') return null
-  const record = raw as Record<string, unknown>
-
-  const matchedSlugs = Array.isArray(record.matched_slugs)
-    ? record.matched_slugs.filter(
-        (slug): slug is string => typeof slug === 'string' && knownSlugs.includes(slug),
-      )
-    : []
-
-  const newReasons: ReasonCandidate[] = []
-  if (Array.isArray(record.new_reasons)) {
-    for (const entry of record.new_reasons) {
-      if (entry === null || typeof entry !== 'object') continue
-      const item = entry as Record<string, unknown>
-      const textPt = typeof item.text_pt === 'string' ? item.text_pt.trim() : ''
-      const categoryCode = typeof item.category_code === 'string' ? item.category_code : ''
-      if (textPt.length < 8 || !categoryCodes.includes(categoryCode)) continue
-
-      newReasons.push({
-        textPt,
-        textEn: typeof item.text_en === 'string' ? item.text_en.trim() : '',
-        textRu: typeof item.text_ru === 'string' ? item.text_ru.trim() : '',
-        categoryCode,
-      })
-    }
-  }
-
-  return { matchedSlugs: [...new Set(matchedSlugs)], newReasons }
 }
