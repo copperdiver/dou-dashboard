@@ -175,6 +175,12 @@ export class DouClient {
  *
  * Обрыв по таймауту распознаётся отдельно: AbortController отменяет
  * запрос сам, и без пояснения это выглядит как загадочная отмена.
+ *
+ * Цепочка причин разворачивается целиком, а не на один уровень.
+ * Отказ прокси в туннеле undici заворачивает дважды, и на первом уровне
+ * видно лишь «Request was cancelled» — по такому сообщению не отличить
+ * прокси, закрывший домен, от оборванного соединения. Настоящая причина
+ * («Proxy response (403) !== 200 when HTTP Tunneling») лежит глубже.
  */
 export function describeFetchError(error: unknown): string {
   if (!(error instanceof Error)) return String(error)
@@ -183,10 +189,18 @@ export function describeFetchError(error: unknown): string {
     return 'таймаут запроса'
   }
 
-  const cause = error.cause as { code?: string; message?: string } | undefined
-  const detail = cause?.code ?? cause?.message
+  type Cause = { code?: string; message?: string; cause?: unknown } | undefined
 
-  return detail ? `${error.message}: ${detail}` : error.message
+  const details: string[] = []
+  let cause = error.cause as Cause
+  // Ограничение глубины — страховка от закольцованной причины.
+  for (let depth = 0; cause && depth < 5; depth += 1) {
+    const detail = cause.code ?? cause.message
+    if (detail && !details.includes(detail)) details.push(detail)
+    cause = cause.cause as Cause
+  }
+
+  return details.length ? `${error.message}: ${details.join(' ← ')}` : error.message
 }
 
 /** URL дневного индекса выпуска. */
