@@ -2,6 +2,7 @@ import IORedis from 'ioredis'
 import { sql } from 'drizzle-orm'
 import { db } from '../../db/client'
 import { ingestDays, jobRuns, sourcePages } from '../../db/schema'
+import { isProxyConfigured } from '../dou/client'
 import { douConfig } from '../env'
 
 /**
@@ -52,6 +53,8 @@ export type DouStatus = {
   /** Последняя проверка по кнопке. */
   probe: DouProbe | null
   redisAvailable: boolean
+  /** Идёт ли трафик к источнику через прокси. */
+  viaProxy: boolean
 }
 
 /**
@@ -128,6 +131,7 @@ export async function getDouStatus(): Promise<DouStatus> {
     lastFailure: failure ? { day: failure.day, error: failure.err, attempts: failure.attempts } : null,
     failedDays: counts.rows[0]?.failed_days ?? 0,
     pendingPages: counts.rows[0]?.pending_pages ?? 0,
+    viaProxy: isProxyConfigured(),
   }
 }
 

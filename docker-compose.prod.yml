@@ -129,6 +129,9 @@ services:
       WORKER_LLM_CONCURRENCY: ${WORKER_LLM_CONCURRENCY:-1}
       # С UA по умолчанию источник отвечает 403 — браузерный обязателен.
       DOU_USER_AGENT: ${DOU_USER_AGENT:?нужен DOU_USER_AGENT в .env}
+      # Прокси только у воркера: веб в in.gov.br не ходит, и гнать туда
+      # его трафик значило бы платить за него.
+      DOU_PROXY_URL: ${DOU_PROXY_URL:-}
       DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
       DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
       DOU_SECTIONS: ${DOU_SECTIONS:-do1}

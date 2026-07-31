@@ -240,6 +240,8 @@ const ru = {
     probeAt: 'Проверка',
     redisDown: 'Redis недоступен',
     never: 'не было',
+    proxyOn: 'Через прокси',
+    proxyOff: 'напрямую',
   },
   /* Экран «база недоступна». Шаги ведут к рабочему окружению. */
   db: {
@@ -467,6 +469,8 @@ const en: EnglishDictionary = {
     probeAt: 'Checked',
     redisDown: 'Redis unavailable',
     never: 'never',
+    proxyOn: 'Via proxy',
+    proxyOff: 'direct',
   },
   db: {
     unavailable: 'The database is unavailable',

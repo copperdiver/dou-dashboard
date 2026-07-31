@@ -30,6 +30,8 @@ export type StatusLabels = {
   probeAt: string
   redisDown: string
   never: string
+  proxyOn: string
+  proxyOff: string
 }
 
 export function DouStatusPanel({
@@ -101,6 +103,8 @@ export function DouStatusPanel({
           <Row label={labels.failedDays} value={formatNumber(locale, status.failedDays)} />
         )}
         <Row label={labels.pendingPages} value={formatNumber(locale, status.pendingPages)} />
+        {/* Без этой строки при отладке неясно, какой адрес видит источник. */}
+        <Row label={labels.proxyOn} value={status.viaProxy ? '✓' : labels.proxyOff} />
         {!status.redisAvailable && <Row label={labels.redisDown} value="—" />}
       </dl>
 

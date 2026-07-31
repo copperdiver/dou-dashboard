@@ -1,4 +1,5 @@
 import type { Redis } from 'ioredis'
+import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from 'undici'
 import { douConfig } from '../env'
 
 /**
@@ -23,6 +24,41 @@ export type DouResponse =
 const COOLDOWN_KEY = 'dou:cooldown:until'
 const STREAK_KEY = 'dou:forbidden:streak'
 const BUDGET_PREFIX = 'dou:budget:'
+
+/*
+ * Прокси только для запросов к in.gov.br.
+ *
+ * Через переменные окружения (NODE_USE_ENV_PROXY) было бы короче, но это
+ * увело бы в прокси ВЕСЬ исходящий трафик процесса, включая обращения
+ * к LLM. Прокси резидентный и считается по гигабайтам, а ответы моделей
+ * заметно крупнее страниц выпуска — счёт рос бы на ровном месте.
+ *
+ * Агент создаётся один раз: у него внутри пул соединений, и пересоздание
+ * на каждый запрос сводило бы пул на нет.
+ */
+let proxyAgent: ProxyAgent | null | undefined
+
+function getProxyDispatcher(): Dispatcher | undefined {
+  if (proxyAgent === undefined) {
+    const url = process.env.DOU_PROXY_URL
+    proxyAgent = url ? new ProxyAgent(url) : null
+  }
+  return proxyAgent ?? undefined
+}
+
+/** Идёт ли трафик к источнику через прокси. Показывается на странице состояния. */
+export function isProxyConfigured(): boolean {
+  return Boolean(process.env.DOU_PROXY_URL)
+}
+
+/*
+ * Запросы идут через `fetch` ИЗ ПАКЕТА undici, а не через глобальный.
+ *
+ * Глобальный `fetch` в Node работает на встроенной копии undici и чужой
+ * `ProxyAgent` не принимает: запрос падает с `UND_ERR_INVALID_ARG` вместо
+ * похода на прокси. Проверено — с пакетным `fetch` тот же агент даёт
+ * честный `ECONNREFUSED` на закрытом порту.
+ */
 
 export class DouClient {
   private lastRequestAt = 0
@@ -52,9 +88,10 @@ export class DouClient {
     const timeout = setTimeout(() => controller.abort(), cfg.requestTimeoutMs)
 
     try {
-      const response = await fetch(url, {
+      const response = await undiciFetch(url, {
         redirect: 'follow',
         signal: controller.signal,
+        dispatcher: getProxyDispatcher(),
         headers: {
           'User-Agent': cfg.userAgent,
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
