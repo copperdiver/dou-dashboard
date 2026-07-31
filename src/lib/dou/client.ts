@@ -85,8 +85,7 @@ export class DouClient {
       await this.resetForbiddenStreak()
       return { kind: 'ok', status: response.status, body }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return { kind: 'transient', status: null, message }
+      return { kind: 'transient', status: null, message: describeFetchError(error) }
     } finally {
       clearTimeout(timeout)
     }
@@ -126,6 +125,31 @@ export class DouClient {
   private async resetForbiddenStreak(): Promise<void> {
     await this.redis.del(STREAK_KEY)
   }
+}
+
+/**
+ * Разворачивает ошибку сети в читаемую строку.
+ *
+ * Node на любом сбое соединения бросает `TypeError: fetch failed`, а
+ * настоящую причину кладёт в `cause`: ENOTFOUND, ECONNREFUSED, ETIMEDOUT,
+ * ошибка сертификата. Без неё в журнале и в `ingest_days.last_error`
+ * оставалось «fetch failed», по которому нельзя отличить упавший DNS
+ * от закрытого файрвола.
+ *
+ * Обрыв по таймауту распознаётся отдельно: AbortController отменяет
+ * запрос сам, и без пояснения это выглядит как загадочная отмена.
+ */
+export function describeFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+
+  if (error.name === 'AbortError' || error.name === 'TimeoutError') {
+    return 'таймаут запроса'
+  }
+
+  const cause = error.cause as { code?: string; message?: string } | undefined
+  const detail = cause?.code ?? cause?.message
+
+  return detail ? `${error.message}: ${detail}` : error.message
 }
 
 /** URL дневного индекса выпуска. */

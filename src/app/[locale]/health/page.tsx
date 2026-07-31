@@ -12,6 +12,8 @@ import {
   formatPercent,
   relativeChange,
 } from '@/lib/format'
+import { DouStatusPanel } from '@/components/dou-status-panel'
+import { getDouStatus } from '@/lib/queries/dou-status'
 import { getDailyRuns, getJobSummaries, getKpis, getRecentRuns } from '@/lib/stats'
 import { SCHEDULE } from '@/worker/jobs'
 
@@ -34,7 +36,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
     return <DatabaseUnavailable locale={locale} message={(error as Error).message} />
   }
 
-  const { kpis, daily, jobs, recent } = data
+  const { kpis, daily, jobs, recent, source } = data
   const dayCount = count(daily.length, d.plurals.days)
 
   return (
@@ -54,6 +56,12 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
             refreshing: d.jobs.refreshing,
           }}
         />
+      </div>
+
+      {/* Связь с источником идёт первой: когда её нет, остальные
+          показатели объясняются именно этим. */}
+      <div className="mt-4">
+        <DouStatusPanel locale={locale} status={source} labels={d.source} />
       </div>
 
       <section className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -192,13 +200,14 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 }
 
 async function loadDashboard() {
-  const [kpis, daily, jobs, recent] = await Promise.all([
+  const [kpis, source, daily, jobs, recent] = await Promise.all([
     getKpis(),
+    getDouStatus(),
     getDailyRuns(CHART_DAYS),
     getJobSummaries(),
     getRecentRuns(12),
   ])
-  return { kpis, daily, jobs, recent }
+  return { kpis, source, daily, jobs, recent }
 }
 
 function DatabaseUnavailable({ locale, message }: { locale: Locale; message: string }) {
