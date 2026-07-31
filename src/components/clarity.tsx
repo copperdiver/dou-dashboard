@@ -15,6 +15,14 @@ import Script from 'next/script'
  *
  * `afterInteractive` — загрузка после гидратации: счётчик не должен
  * задерживать первую отрисовку.
+ *
+ * Идентификатор тега — `ms-clarity`, и «clarity» здесь использовать
+ * нельзя. Браузер выставляет элементы с `id` свойствами `window`, так что
+ * `<script id="clarity">` делает `window.clarity` этим самым элементом.
+ * Тогда `c[a]=c[a]||function(){…}` видит занятое место и очередь не
+ * создаёт, а загрузившийся тег вызывает `window.clarity(...)` — элемент,
+ * не функцию — и падает. Счётчик при этом молчит: скрипт грузится,
+ * ошибок в разметке нет, а сессии не отправляются ни одной.
  */
 export function Clarity({ id }: { id: string | undefined }) {
   // Идентификатор попадает внутрь строки скрипта, поэтому допускаются
@@ -23,7 +31,7 @@ export function Clarity({ id }: { id: string | undefined }) {
   if (!id || !/^[a-z0-9]+$/i.test(id)) return null
 
   return (
-    <Script id="clarity" strategy="afterInteractive">
+    <Script id="ms-clarity" strategy="afterInteractive">
       {`(function(c,l,a,r,i,t,y){
     c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
     t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
