@@ -19,6 +19,23 @@ x-app-env: &app-env
   DATABASE_URL: postgres://${POSTGRES_USER:-dou}:${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD в .env}@dou-postgres:5432/${POSTGRES_DB:-dou_dashboard}
   REDIS_URL: redis://dou-redis:6379
 
+# Настройки источника нужны обоим сервисам, а не только воркеру: страница
+# состояния делает разовую проверку связи по кнопке, и делает её тем же
+# клиентом. Расходись настройки — проверка отвечала бы не за то, что
+# происходит в конвейере: с UA по умолчанию источник даёт 403, а 403
+# записывает в Redis паузу, общую с воркером. Диагностика остановила бы
+# то, ради чего её открыли.
+x-dou-env: &dou-env
+  # С UA по умолчанию источник отвечает 403 — браузерный обязателен.
+  DOU_USER_AGENT: ${DOU_USER_AGENT:?нужен DOU_USER_AGENT в .env}
+  # Прокси нужен там, где адрес сервера закрыт источником. Пусто — запросы
+  # идут напрямую. Действует только на in.gov.br: трафик к LLM в прокси
+  # не заворачивается, иначе резидентный тариф считал бы и ответы моделей.
+  DOU_PROXY_URL: ${DOU_PROXY_URL:-}
+  DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
+  DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
+  DOU_SECTIONS: ${DOU_SECTIONS:-do1}
+
 # Образ и тег заданы переменными IMAGE_PREFIX и IMAGE_TAG: откат на
 # предыдущую версию — это правка .env и `up -d`, без редактирования
 # этого файла.
@@ -80,7 +97,7 @@ services:
     container_name: dou-web
     restart: unless-stopped
     environment:
-      <<: *app-env
+      <<: [*app-env, *dou-env]
       # Канонические ссылки и hreflang. Без префикса NEXT_PUBLIC_ намеренно:
       # такие переменные Next подставляет на сборке, и задать их здесь
       # было бы нельзя.
@@ -124,17 +141,9 @@ services:
     # В сеть proxy не входит: наружу воркер ничего не отдаёт, только сам
     # ходит в in.gov.br и к провайдеру LLM.
     environment:
-      <<: *app-env
+      <<: [*app-env, *dou-env]
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
       WORKER_LLM_CONCURRENCY: ${WORKER_LLM_CONCURRENCY:-1}
-      # С UA по умолчанию источник отвечает 403 — браузерный обязателен.
-      DOU_USER_AGENT: ${DOU_USER_AGENT:?нужен DOU_USER_AGENT в .env}
-      # Прокси только у воркера: веб в in.gov.br не ходит, и гнать туда
-      # его трафик значило бы платить за него.
-      DOU_PROXY_URL: ${DOU_PROXY_URL:-}
-      DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
-      DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
-      DOU_SECTIONS: ${DOU_SECTIONS:-do1}
       DISCOVER_LOOKBACK_DAYS: ${DISCOVER_LOOKBACK_DAYS:-7}
       ENUMERATE_BATCH: ${ENUMERATE_BATCH:-5}
       FETCH_BATCH: ${FETCH_BATCH:-10}
