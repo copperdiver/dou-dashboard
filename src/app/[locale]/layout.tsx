@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { notFound } from 'next/navigation'
+import { Clarity } from '@/components/clarity'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { SiteNav, type NavItem } from '@/components/site-nav'
@@ -97,6 +98,10 @@ export default async function LocaleLayout({
     >
       <head />
       <body className="min-h-dvh antialiased">
+        {/* Счётчик в корневом layout, поэтому попадает на все страницы
+            и переживает клиентскую навигацию между ними. */}
+        <Clarity id={process.env.CLARITY_ID} />
+
         <SiteNav
           locale={locale}
           items={navItems}
