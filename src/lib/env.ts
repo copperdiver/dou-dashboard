@@ -70,6 +70,12 @@ export function pipelineConfig() {
     /** Насколько назад смотрит discover: DOU публикует с задержкой и правит выпуски. */
     discoverLookbackDays: int('DISCOVER_LOOKBACK_DAYS', 7),
     enumerateBatch: int('ENUMERATE_BATCH', 5),
+    /**
+     * Через сколько часов вернуться к дню с пустым индексом, пока этот день
+     * ещё не кончился по Сан-Паулу. Выпуск выходит утром, а опрос начинается
+     * ночью, поэтому пустой индекс у текущего дня — норма, а не «выпуска нет».
+     */
+    emptyIndexRetryHours: int('ENUMERATE_EMPTY_RETRY_HOURS', 3),
     fetchBatch: int('FETCH_BATCH', 10),
     /** Попыток на день/страницу до статуса failed. */
     maxAttempts: int('INGEST_MAX_ATTEMPTS', 5),

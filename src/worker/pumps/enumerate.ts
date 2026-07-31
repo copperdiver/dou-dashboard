@@ -71,13 +71,62 @@ async function markFailure(
 }
 
 /**
+ * Кончился ли уже день выпуска по бразильскому календарю.
+ *
+ * Сравнение именно по Сан-Паулу, а не по времени сервера: выпуск живёт
+ * по своему календарю, и наш часовой пояс к нему отношения не имеет.
+ * При TZ=Europe/Moscow «сегодня» у сервера наступает на шесть часов
+ * раньше бразильского — на этом расхождении день и терялся.
+ */
+export function isEditionDayOver(editionDate: string, now: Date = new Date()): boolean {
+  // en-CA даёт как раз YYYY-MM-DD, поэтому строки сравнимы напрямую.
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now)
+  return today > editionDate
+}
+
+/**
+ * Пустой индекс: выпуска нет — или ещё нет.
+ *
+ * Различить это по одному ответу нельзя, а цена ошибки несимметрична.
+ * Опрос свежего дня приходится на ночь по Бразилии: DOU выкладывает
+ * выпуск утром, и до тех пор индекс пуст совершенно законно. Закрыть
+ * день на этом основании — значит потерять его навсегда: статус
+ * терминальный, а `discover` вставляет дни через `on conflict do nothing`
+ * и закрытый день не переоткрывает. Так и терялись свежие выпуски.
+ *
+ * Поэтому «выпуска не было» — вывод только про день, который уже прошёл
+ * по бразильскому календарю. Пока день идёт, пустой индекс означает лишь
+ * «ещё рано», и мы возвращаемся через несколько часов. Выходные от этого
+ * стоят нескольких лишних запросов в сутки — на фоне суточного бюджета
+ * это ничто, а пропущенный выпуск не восстановить.
+ */
+async function markEmptyIndex(claim: Claim, retryAfterHours: number): Promise<'no_edition' | 'retry'> {
+  const dayIsOver = isEditionDayOver(claim.editionDate)
+
+  await db.execute(sql`
+    update ${ingestDays}
+       set status = ${dayIsOver ? 'no_edition' : 'pending'},
+           articles_found = 0,
+           relevant_found = 0,
+           last_error = null,
+           completed_at = ${dayIsOver ? sql`now()` : null},
+           next_attempt_at = ${
+             dayIsOver ? null : sql`now() + make_interval(hours => ${retryAfterHours})`
+           }
+     where edition_date = ${claim.editionDate} and section = ${claim.section}
+  `)
+
+  return dayIsOver ? 'no_edition' : 'retry'
+}
+
+/**
  * Тянет дневной индекс, сохраняет снапшот и апсертит релевантные статьи.
  *
  * Снапшот сырого jsonArray хранится всегда: он позволяет позже расширить
  * фильтр релевантности и переразобрать историю, не обращаясь к сети.
  */
 export const enumerate: Pump = async ({ log, client }: PumpContext) => {
-  const { enumerateBatch, maxAttempts, claimLeaseMs } = pipelineConfig()
+  const { enumerateBatch, maxAttempts, claimLeaseMs, emptyIndexRetryHours } = pipelineConfig()
 
   const cooldown = await client.cooldownRemainingMs()
   if (cooldown > 0) {
@@ -118,14 +167,11 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     }
 
     if (response.kind === 'gone') {
-      // Выпуска за этот день не существует — это не сбой.
-      await db.execute(sql`
-        update ${ingestDays}
-           set status = 'no_edition', articles_found = 0, relevant_found = 0,
-               next_attempt_at = null, completed_at = now(), last_error = null
-         where edition_date = ${claim.editionDate} and section = ${claim.section}
-      `)
-      noEdition += 1
+      // Выпуска за этот день не существует — это не сбой. Но если день ещё
+      // не кончился, его может и не существовать пока.
+      const outcome = await markEmptyIndex(claim, emptyIndexRetryHours)
+      if (outcome === 'no_edition') noEdition += 1
+      else log(`${claim.editionDate}: выпуска пока нет (HTTP ${response.status}) → проверю позже`)
       continue
     }
 
@@ -154,13 +200,9 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     }
 
     if (index.items.length === 0) {
-      await db.execute(sql`
-        update ${ingestDays}
-           set status = 'no_edition', articles_found = 0, relevant_found = 0,
-               next_attempt_at = null, completed_at = now(), last_error = null
-         where edition_date = ${claim.editionDate} and section = ${claim.section}
-      `)
-      noEdition += 1
+      const outcome = await markEmptyIndex(claim, emptyIndexRetryHours)
+      if (outcome === 'no_edition') noEdition += 1
+      else log(`${claim.editionDate}: индекс пуст, день ещё идёт → проверю позже`)
       continue
     }
 
