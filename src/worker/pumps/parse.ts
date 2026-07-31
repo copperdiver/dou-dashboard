@@ -31,6 +31,7 @@ type Claim = {
   urlTitle: string
   editionDate: string
   html: string
+  parseAttempts: number
 }
 
 /**
@@ -50,6 +51,10 @@ async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
       from ${sourcePages}
       where fetch_status = 'fetched'
         and parser_version < ${PARSER_VERSION}
+        -- Страница, только что упавшая на разборе, ждёт своей отсрочки:
+        -- иначе одна отравленная страница возвращалась бы в каждую пачку
+        -- и вытесняла исправные.
+        and (parse_next_attempt_at is null or parse_next_attempt_at < now())
         and (
           parse_status <> 'running'
           or parsed_at is null
@@ -74,6 +79,7 @@ async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
       urlTitle: sourcePages.urlTitle,
       editionDate: sourcePages.editionDate,
       html: sourcePageHtml.html,
+      parseAttempts: sourcePages.parseAttempts,
     })
     .from(sourcePages)
     .innerJoin(sourcePageHtml, eq(sourcePageHtml.pageId, sourcePages.id))
@@ -83,6 +89,53 @@ async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
         claimed.rows.map((r) => r.id),
       ),
     )
+}
+
+/**
+ * Освобождает захват после сбоя разбора и назначает отсрочку.
+ *
+ * Отсрочка растёт вдвое с каждой попыткой, как у загрузки: причина сбоя
+ * может быть временной (нехватка места, недоступный справочник), и долбить
+ * страницу каждые пять минут незачем. После `maxAttempts` страница
+ * переводится в `failed` и больше не берётся — иначе она вечно занимала бы
+ * место в пачке.
+ */
+async function releaseParseClaim(
+  claim: Claim,
+  message: string,
+  maxAttempts: number,
+): Promise<void> {
+  const attempts = claim.parseAttempts + 1
+  const giveUp = attempts >= maxAttempts
+  const delaySeconds = Math.min(3600, 60 * 2 ** Math.max(0, attempts - 1))
+
+  await db.execute(sql`
+    update ${sourcePages}
+       set parse_status = ${giveUp ? 'failed' : 'pending'},
+           parse_error = ${message.slice(0, 1000)},
+           parse_attempts = ${attempts},
+           parse_next_attempt_at = ${
+             giveUp ? null : sql`now() + make_interval(secs => ${delaySeconds})`
+           }
+     where id = ${claim.id}
+  `)
+}
+
+/**
+ * Оставляет по одной строке на ключ, сохраняя порядок.
+ *
+ * Нужна перед `insert ... on conflict`: две строки с одинаковым ключом
+ * в одном запросе Postgres не принимает вовсе, и падает весь INSERT,
+ * а не лишняя строка.
+ */
+function dedupeBy<T>(rows: T[], key: (row: T) => string | number): T[] {
+  const seen = new Set<string | number>()
+  return rows.filter((row) => {
+    const k = key(row)
+    if (seen.has(k)) return false
+    seen.add(k)
+    return true
+  })
 }
 
 /** Справочники читаются один раз на прогон, а не на строку. */
@@ -110,7 +163,7 @@ async function loadLookups(): Promise<{
  * удаляются физически.
  */
 export const parsePages: Pump = async ({ log }) => {
-  const { fetchBatch, claimLeaseMs } = pipelineConfig()
+  const { fetchBatch, claimLeaseMs, maxAttempts } = pipelineConfig()
   const claims = await claimPages(fetchBatch, claimLeaseMs)
   if (claims.length === 0) return { itemsProcessed: 0, meta: { pages: 0 } }
 
@@ -123,6 +176,7 @@ export const parsePages: Pump = async ({ log }) => {
   let unparsedTotal = 0
   let unmappedCountries = 0
   let schemaMismatch = 0
+  let failures = 0
 
   for (const claim of claims) {
     const blocks = extractBlocks(claim.html)
@@ -146,259 +200,293 @@ export const parsePages: Pump = async ({ log }) => {
     const parsedActs = splitActs(blocks)
     let pageUnparsed = 0
 
-    await db.transaction(async (tx) => {
-      // Акты пересоздаются: их дети (люди, решения) висят на act_id
-      // и восстанавливаются в этой же транзакции по своим ключам.
-      const actIds: string[] = []
+    try {
+      await db.transaction(async (tx) => {
+        // Акты пересоздаются: их дети (люди, решения) висят на act_id
+        // и восстанавливаются в этой же транзакции по своим ключам.
+        const actIds: string[] = []
 
-      for (const act of parsedActs) {
-        const [row] = await tx
-          .insert(acts)
-          .values({
-            pageId: claim.id,
-            editionDate: claim.editionDate,
-            ordinal: act.ordinal,
-            identificaRaw: act.identifica,
-            actKind: act.kind,
-            naturalizationType: act.naturalizationType,
-            legalBasis: act.legalBasis,
-            paragraphs: act.paragraphs,
-            bodySha256: act.bodySha256,
-          })
-          .onConflictDoUpdate({
-            target: [acts.pageId, acts.ordinal],
-            set: {
-              identificaRaw: sql`excluded.identifica_raw`,
-              actKind: sql`excluded.act_kind`,
-              naturalizationType: sql`excluded.naturalization_type`,
-              legalBasis: sql`excluded.legal_basis`,
-              paragraphs: sql`excluded.paragraphs`,
-              bodySha256: sql`excluded.body_sha256`,
-              editionDate: sql`excluded.edition_date`,
-            },
-          })
-          .returning({ id: acts.id })
+        for (const act of parsedActs) {
+          const [row] = await tx
+            .insert(acts)
+            .values({
+              pageId: claim.id,
+              editionDate: claim.editionDate,
+              ordinal: act.ordinal,
+              identificaRaw: act.identifica,
+              actKind: act.kind,
+              naturalizationType: act.naturalizationType,
+              legalBasis: act.legalBasis,
+              paragraphs: act.paragraphs,
+              bodySha256: act.bodySha256,
+            })
+            .onConflictDoUpdate({
+              target: [acts.pageId, acts.ordinal],
+              set: {
+                identificaRaw: sql`excluded.identifica_raw`,
+                actKind: sql`excluded.act_kind`,
+                naturalizationType: sql`excluded.naturalization_type`,
+                legalBasis: sql`excluded.legal_basis`,
+                paragraphs: sql`excluded.paragraphs`,
+                bodySha256: sql`excluded.body_sha256`,
+                editionDate: sql`excluded.edition_date`,
+              },
+            })
+            .returning({ id: acts.id })
 
-        if (!row) continue
-        actIds.push(row.id)
+          if (!row) continue
+          actIds.push(row.id)
 
-        if (act.kind === 'approval') {
-          const { people, unparsed } = extractApprovals(act.paragraphs)
-          pageUnparsed += unparsed.length
+          if (act.kind === 'approval') {
+            const { people, unparsed } = extractApprovals(act.paragraphs)
+            pageUnparsed += unparsed.length
 
-          if (people.length > 0) {
-            const values = people.map((person, index) => {
-              const countryId = person.countryRaw
-                ? (lookups.countries.get(normalizeCountryName(person.countryRaw)) ?? null)
-                : null
-              if (person.countryRaw && countryId === null) unmappedCountries += 1
+            if (people.length > 0) {
+              const values = people.map((person, index) => {
+                const countryId = person.countryRaw
+                  ? (lookups.countries.get(normalizeCountryName(person.countryRaw)) ?? null)
+                  : null
+                if (person.countryRaw && countryId === null) unmappedCountries += 1
 
-              return {
+                return {
+                  actId: row.id,
+                  pageId: claim.id,
+                  editionDate: claim.editionDate,
+                  ordinal: index,
+                  fullName: person.fullName,
+                  nameNorm: normalizeName(person.fullName),
+                  documentId: person.documentId,
+                  countryRaw: person.countryRaw,
+                  countryId,
+                  birthDate: person.birthDate,
+                  birthDateRaw: person.birthDateRaw,
+                  // Возраст считается от даты выпуска, а не от now():
+                  // при переразборе значение должно остаться тем же.
+                  ageAtPublication: person.birthDate
+                    ? ageOn(person.birthDate, claim.editionDate)
+                    : null,
+                  parentsRaw: person.parentsRaw,
+                  stateRaw: person.stateRaw,
+                  stateId: person.stateRaw
+                    ? (lookups.states.get(normalizeKey(person.stateRaw)) ?? null)
+                    : null,
+                  processNumber: person.processNumber,
+                  processNumberNorm: person.processNumberNorm,
+                  paragraphText: person.paragraphText,
+                  paragraphSha256: person.paragraphSha256,
+                  parseConfidence: String(person.confidence),
+                  parserVersion: PARSER_VERSION,
+                  retiredAt: null,
+                }
+              })
+
+              await tx
+                .insert(approvals)
+                // Дедупликация по ключу конфликта обязательна: если один
+                // INSERT ... ON CONFLICT содержит две строки с одинаковым
+                // ключом, Postgres отвергает весь запрос («cannot affect
+                // row a second time»). Источник такое печатает: в выпуске
+                // от 06.04.2026 MANA ULYSSE и SADRACK HERMILUS повторены
+                // внутри одного акта побайтово. Ключ здесь — хеш абзаца,
+                // поэтому отбрасывается заведомо тот же текст, а не
+                // однофамилец.
+                .values(dedupeBy(values, (v) => v.paragraphSha256))
+                .onConflictDoUpdate({
+                  target: [approvals.actId, approvals.paragraphSha256],
+                  set: {
+                    ordinal: sql`excluded.ordinal`,
+                    fullName: sql`excluded.full_name`,
+                    nameNorm: sql`excluded.name_norm`,
+                    countryId: sql`excluded.country_id`,
+                    stateId: sql`excluded.state_id`,
+                    birthDate: sql`excluded.birth_date`,
+                    ageAtPublication: sql`excluded.age_at_publication`,
+                    parseConfidence: sql`excluded.parse_confidence`,
+                    parserVersion: sql`excluded.parser_version`,
+                    retiredAt: sql`null`,
+                  },
+                })
+
+              approvalsTotal += values.length
+            }
+          } else if (act.kind === 'denial_list') {
+            const { denials: parsed, unparsed } = extractDenials(act.paragraphs)
+            pageUnparsed += unparsed.length
+
+            if (parsed.length > 0) {
+              /*
+               * Текст причины дедуплицируется в reason_texts: одинаковые
+               * тексты канонизируются и уходят в LLM один раз, а не по
+               * разу на каждый отказ (замер: 267 отказов → 203 текста).
+               * Здесь считается только дешёвый ключ, без правил, поэтому
+               * рост RULES_VERSION не требует переразбора страниц.
+               */
+              const textIdByHash = new Map<string, string>()
+              for (const denial of parsed) {
+                if (!denial.reasonText) continue
+                const { textNorm } = reasonDedupKey(denial.reasonText)
+                if (textNorm.length === 0) continue
+                const hash = sha256Hex(textNorm)
+                if (textIdByHash.has(hash)) continue
+
+                const [textRow] = await tx
+                  .insert(reasonTexts)
+                  .values({
+                    textRaw: denial.reasonText,
+                    textNorm,
+                    normSha256: hash,
+                    occurrences: 1,
+                  })
+                  // rules_version при повторной встрече не сбрасывается:
+                  // иначе уже канонизированный текст переразбирался бы вечно.
+                  // occurrences здесь не трогаем — он пересчитывается ниже
+                  // из фактических связей.
+                  .onConflictDoUpdate({
+                    target: reasonTexts.normSha256,
+                    set: { textRaw: sql`${reasonTexts.textRaw}` },
+                  })
+                  .returning({ id: reasonTexts.id })
+
+                if (textRow) textIdByHash.set(hash, textRow.id)
+              }
+
+              const values = parsed.map((denial) => ({
                 actId: row.id,
                 pageId: claim.id,
                 editionDate: claim.editionDate,
-                ordinal: index,
-                fullName: person.fullName,
-                nameNorm: normalizeName(person.fullName),
-                documentId: person.documentId,
-                countryRaw: person.countryRaw,
-                countryId,
-                birthDate: person.birthDate,
-                birthDateRaw: person.birthDateRaw,
-                // Возраст считается от даты выпуска, а не от now():
-                // при переразборе значение должно остаться тем же.
-                ageAtPublication: person.birthDate
-                  ? ageOn(person.birthDate, claim.editionDate)
+                blockOrdinal: denial.blockOrdinal,
+                codigo: denial.codigo,
+                assuntoRaw: denial.assuntoRaw,
+                decisionKind: denial.decisionKind,
+                isUpheld: denial.isUpheld,
+                subjectKind: denial.subjectKind,
+                // Повторную публикацию выставляет отдельный насос
+                // link-appeals: для этого нужна вся история, а не одна страница.
+                isRepublication: false,
+                countsAsNewDenial:
+                  denial.decisionKind === 'denial' &&
+                  !denial.isUpheld &&
+                  denial.subjectKind === 'naturalization',
+                processNumber: denial.processNumber,
+                processNumberNorm: denial.processNumberNorm,
+                fullName: denial.fullName,
+                nameNorm: normalizeName(denial.fullName),
+                reasonTextId: denial.reasonText
+                  ? (textIdByHash.get(sha256Hex(reasonDedupKey(denial.reasonText).textNorm)) ?? null)
                   : null,
-                parentsRaw: person.parentsRaw,
-                stateRaw: person.stateRaw,
-                stateId: person.stateRaw
-                  ? (lookups.states.get(normalizeKey(person.stateRaw)) ?? null)
-                  : null,
-                processNumber: person.processNumber,
-                processNumberNorm: person.processNumberNorm,
-                paragraphText: person.paragraphText,
-                paragraphSha256: person.paragraphSha256,
-                parseConfidence: String(person.confidence),
                 parserVersion: PARSER_VERSION,
                 retiredAt: null,
-              }
-            })
+              }))
 
-            await tx
-              .insert(approvals)
-              .values(values)
-              .onConflictDoUpdate({
-                target: [approvals.actId, approvals.paragraphSha256],
-                set: {
-                  ordinal: sql`excluded.ordinal`,
-                  fullName: sql`excluded.full_name`,
-                  nameNorm: sql`excluded.name_norm`,
-                  countryId: sql`excluded.country_id`,
-                  stateId: sql`excluded.state_id`,
-                  birthDate: sql`excluded.birth_date`,
-                  ageAtPublication: sql`excluded.age_at_publication`,
-                  parseConfidence: sql`excluded.parse_confidence`,
-                  parserVersion: sql`excluded.parser_version`,
-                  retiredAt: sql`null`,
-                },
-              })
-
-            approvalsTotal += values.length
-          }
-        } else if (act.kind === 'denial_list') {
-          const { denials: parsed, unparsed } = extractDenials(act.paragraphs)
-          pageUnparsed += unparsed.length
-
-          if (parsed.length > 0) {
-            /*
-             * Текст причины дедуплицируется в reason_texts: одинаковые
-             * тексты канонизируются и уходят в LLM один раз, а не по
-             * разу на каждый отказ (замер: 267 отказов → 203 текста).
-             * Здесь считается только дешёвый ключ, без правил, поэтому
-             * рост RULES_VERSION не требует переразбора страниц.
-             */
-            const textIdByHash = new Map<string, string>()
-            for (const denial of parsed) {
-              if (!denial.reasonText) continue
-              const { textNorm } = reasonDedupKey(denial.reasonText)
-              if (textNorm.length === 0) continue
-              const hash = sha256Hex(textNorm)
-              if (textIdByHash.has(hash)) continue
-
-              const [textRow] = await tx
-                .insert(reasonTexts)
-                .values({
-                  textRaw: denial.reasonText,
-                  textNorm,
-                  normSha256: hash,
-                  occurrences: 1,
-                })
-                // rules_version при повторной встрече не сбрасывается:
-                // иначе уже канонизированный текст переразбирался бы вечно.
-                // occurrences здесь не трогаем — он пересчитывается ниже
-                // из фактических связей.
+              await tx
+                .insert(denials)
+                // Та же защита, что и у одобрений: ключ конфликта здесь —
+                // порядковый номер блока внутри акта.
+                .values(dedupeBy(values, (v) => v.blockOrdinal))
                 .onConflictDoUpdate({
-                  target: reasonTexts.normSha256,
-                  set: { textRaw: sql`${reasonTexts.textRaw}` },
+                  target: [denials.actId, denials.blockOrdinal],
+                  set: {
+                    codigo: sql`excluded.codigo`,
+                    assuntoRaw: sql`excluded.assunto_raw`,
+                    decisionKind: sql`excluded.decision_kind`,
+                    isUpheld: sql`excluded.is_upheld`,
+                    subjectKind: sql`excluded.subject_kind`,
+                    countsAsNewDenial: sql`excluded.counts_as_new_denial`,
+                    processNumber: sql`excluded.process_number`,
+                    processNumberNorm: sql`excluded.process_number_norm`,
+                    fullName: sql`excluded.full_name`,
+                    nameNorm: sql`excluded.name_norm`,
+                    reasonTextId: sql`excluded.reason_text_id`,
+                    parserVersion: sql`excluded.parser_version`,
+                    retiredAt: sql`null`,
+                  },
                 })
-                .returning({ id: reasonTexts.id })
 
-              if (textRow) textIdByHash.set(hash, textRow.id)
-            }
+              denialsTotal += values.length
 
-            const values = parsed.map((denial) => ({
-              actId: row.id,
-              pageId: claim.id,
-              editionDate: claim.editionDate,
-              blockOrdinal: denial.blockOrdinal,
-              codigo: denial.codigo,
-              assuntoRaw: denial.assuntoRaw,
-              decisionKind: denial.decisionKind,
-              isUpheld: denial.isUpheld,
-              subjectKind: denial.subjectKind,
-              // Повторную публикацию выставляет отдельный насос
-              // link-appeals: для этого нужна вся история, а не одна страница.
-              isRepublication: false,
-              countsAsNewDenial:
-                denial.decisionKind === 'denial' &&
-                !denial.isUpheld &&
-                denial.subjectKind === 'naturalization',
-              processNumber: denial.processNumber,
-              processNumberNorm: denial.processNumberNorm,
-              fullName: denial.fullName,
-              nameNorm: normalizeName(denial.fullName),
-              reasonTextId: denial.reasonText
-                ? (textIdByHash.get(sha256Hex(reasonDedupKey(denial.reasonText).textNorm)) ?? null)
-                : null,
-              parserVersion: PARSER_VERSION,
-              retiredAt: null,
-            }))
+              /*
+               * occurrences — производная величина, а не счётчик приращений.
+               * Инкремент здесь давал бы неверное число дважды: внутри
+               * страницы один текст встречается у нескольких отказов, а при
+               * переразборе прибавка легла бы поверх старой. Пересчёт из
+               * фактических связей всегда верен и идемпотентен.
+               */
+              const textIds = [...textIdByHash.values()]
+              if (textIds.length > 0) {
+                const counts = await tx
+                  .select({ id: denials.reasonTextId, count: sql<number>`count(*)::int` })
+                  .from(denials)
+                  .where(and(inArray(denials.reasonTextId, textIds), isNull(denials.retiredAt)))
+                  .groupBy(denials.reasonTextId)
 
-            await tx
-              .insert(denials)
-              .values(values)
-              .onConflictDoUpdate({
-                target: [denials.actId, denials.blockOrdinal],
-                set: {
-                  codigo: sql`excluded.codigo`,
-                  assuntoRaw: sql`excluded.assunto_raw`,
-                  decisionKind: sql`excluded.decision_kind`,
-                  isUpheld: sql`excluded.is_upheld`,
-                  subjectKind: sql`excluded.subject_kind`,
-                  countsAsNewDenial: sql`excluded.counts_as_new_denial`,
-                  processNumber: sql`excluded.process_number`,
-                  processNumberNorm: sql`excluded.process_number_norm`,
-                  fullName: sql`excluded.full_name`,
-                  nameNorm: sql`excluded.name_norm`,
-                  reasonTextId: sql`excluded.reason_text_id`,
-                  parserVersion: sql`excluded.parser_version`,
-                  retiredAt: sql`null`,
-                },
-              })
-
-            denialsTotal += values.length
-
-            /*
-             * occurrences — производная величина, а не счётчик приращений.
-             * Инкремент здесь давал бы неверное число дважды: внутри
-             * страницы один текст встречается у нескольких отказов, а при
-             * переразборе прибавка легла бы поверх старой. Пересчёт из
-             * фактических связей всегда верен и идемпотентен.
-             */
-            const textIds = [...textIdByHash.values()]
-            if (textIds.length > 0) {
-              const counts = await tx
-                .select({ id: denials.reasonTextId, count: sql<number>`count(*)::int` })
-                .from(denials)
-                .where(and(inArray(denials.reasonTextId, textIds), isNull(denials.retiredAt)))
-                .groupBy(denials.reasonTextId)
-
-              for (const entry of counts) {
-                if (!entry.id) continue
-                await tx
-                  .update(reasonTexts)
-                  .set({ occurrences: entry.count })
-                  .where(eq(reasonTexts.id, entry.id))
+                for (const entry of counts) {
+                  if (!entry.id) continue
+                  await tx
+                    .update(reasonTexts)
+                    .set({ occurrences: entry.count })
+                    .where(eq(reasonTexts.id, entry.id))
+                }
               }
             }
           }
         }
-      }
 
-      // Записи, исчезнувшие после переразбора: не удаляем, а помечаем.
-      // Молчаливая потеря человека — худший возможный отказ парсера.
-      await tx
-        .update(approvals)
-        .set({ retiredAt: new Date() })
-        .where(and(eq(approvals.pageId, claim.id), sql`${approvals.parserVersion} < ${PARSER_VERSION}`))
+        // Записи, исчезнувшие после переразбора: не удаляем, а помечаем.
+        // Молчаливая потеря человека — худший возможный отказ парсера.
+        await tx
+          .update(approvals)
+          .set({ retiredAt: new Date() })
+          .where(and(eq(approvals.pageId, claim.id), sql`${approvals.parserVersion} < ${PARSER_VERSION}`))
 
-      await tx
-        .update(denials)
-        .set({ retiredAt: new Date() })
-        .where(and(eq(denials.pageId, claim.id), sql`${denials.parserVersion} < ${PARSER_VERSION}`))
+        await tx
+          .update(denials)
+          .set({ retiredAt: new Date() })
+          .where(and(eq(denials.pageId, claim.id), sql`${denials.parserVersion} < ${PARSER_VERSION}`))
 
-      await tx
-        .update(sourcePages)
-        .set({
-          parseStatus: pageUnparsed > 0 ? 'partial' : 'ok',
-          parseError: null,
-          parserVersion: PARSER_VERSION,
-          parsedAt: new Date(),
-        })
-        .where(eq(sourcePages.id, claim.id))
+        await tx
+          .update(sourcePages)
+          .set({
+            parseStatus: pageUnparsed > 0 ? 'partial' : 'ok',
+            parseError: null,
+            parserVersion: PARSER_VERSION,
+            parsedAt: new Date(),
+            // Успех обнуляет счётчик: следующая поломка на этой странице
+            // должна получить полный набор попыток, а не остаток прошлой.
+            parseAttempts: 0,
+            parseNextAttemptAt: null,
+          })
+          .where(eq(sourcePages.id, claim.id))
 
-      // Витрины за этот день пересчитает rollup.
-      await tx
-        .insert(dirtyDays)
-        .values({ day: claim.editionDate, reason: 'parse' })
-        .onConflictDoUpdate({
-          target: dirtyDays.day,
-          set: { reason: sql`'parse'`, markedAt: sql`now()` },
-        })
+        // Витрины за этот день пересчитает rollup.
+        await tx
+          .insert(dirtyDays)
+          .values({ day: claim.editionDate, reason: 'parse' })
+          .onConflictDoUpdate({
+            target: dirtyDays.day,
+            set: { reason: sql`'parse'`, markedAt: sql`now()` },
+          })
 
-      actsTotal += parsedActs.length
-    })
+          actsTotal += parsedActs.length
+      })
+    } catch (error) {
+      /*
+       * Одна страница не должна останавливать разбор остальных.
+       * Транзакция уже откатилась сама, здесь только освобождается захват
+       * и назначается отсрочка — иначе страница вернулась бы в следующую
+       * же пачку и снова всё уронила.
+       *
+       * Причина СУБД лежит в `cause`: drizzle кладёт в message только текст
+       * запроса, и без неё в журнале остаётся простыня из параметров.
+       */
+      const err = error as Error & { cause?: { message?: string; detail?: string } }
+      const reason = err.cause?.message ?? err.message
+      const detail = err.cause?.detail ? ` (${err.cause.detail})` : ''
+
+      failures += 1
+      await releaseParseClaim(claim, `${reason}${detail}`, maxAttempts)
+      log(`${claim.urlTitle}: РАЗБОР УПАЛ — ${reason}${detail}`)
+      continue
+    }
 
     unparsedTotal += pageUnparsed
     pagesDone += 1
@@ -406,7 +494,7 @@ export const parsePages: Pump = async ({ log }) => {
 
   log(
     `страниц ${pagesDone}, актов ${actsTotal}, одобрений ${approvalsTotal}, ` +
-      `решений ${denialsTotal}, не разобрано ${unparsedTotal}`,
+      `решений ${denialsTotal}, не разобрано ${unparsedTotal}, сбоев ${failures}`,
   )
 
   return {
@@ -419,6 +507,7 @@ export const parsePages: Pump = async ({ log }) => {
       unparsed: unparsedTotal,
       unmappedCountries,
       schemaMismatch,
+      failures,
     },
   }
 }

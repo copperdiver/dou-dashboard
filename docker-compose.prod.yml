@@ -1,0 +1,160 @@
+name: dou-dashboard
+
+# Продакшен: образы берутся из GHCR, ничего не собирается на месте.
+#
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# На сервер нужно скопировать только этот файл и .env — код приезжает
+# внутри образов.
+#
+# Ingress — Traefik во внешней сети `proxy`: он терминирует TLS и сам
+# получает сертификат. Поэтому наружу не публикуется ни один порт, даже
+# у web: до него Traefik достаёт по внутренней сети, а `expose` лишь
+# объявляет порт для этой сети.
+
+x-app-env: &app-env
+  NODE_ENV: production
+  TZ: ${TZ:-Europe/Moscow}
+  DATABASE_URL: postgres://${POSTGRES_USER:-dou}:${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD в .env}@dou-postgres:5432/${POSTGRES_DB:-dou_dashboard}
+  REDIS_URL: redis://dou-redis:6379
+
+# Образ и тег заданы переменными IMAGE_PREFIX и IMAGE_TAG: откат на
+# предыдущую версию — это правка .env и `up -d`, без редактирования
+# этого файла.
+
+services:
+  dou-postgres:
+    image: postgres:18-alpine
+    container_name: dou-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dou}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD в .env}
+      POSTGRES_DB: ${POSTGRES_DB:-dou_dashboard}
+      TZ: ${TZ:-Europe/Moscow}
+      # Часовой пояс сессий: от него зависит группировка статистики по суткам.
+      PGTZ: ${TZ:-Europe/Moscow}
+    volumes:
+      - dou_pgdata:/var/lib/postgresql
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-dou} -d ${POSTGRES_DB:-dou_dashboard}']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  dou-redis:
+    image: redis:8-alpine
+    container_name: dou-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - dou_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # Одноразовый сервис: применяет миграции, заливает справочники и завершается.
+  # web и worker ждут его успешного выхода — так на старте нет гонки за схему.
+  # Справочники стран и штатов не демо-данные: без них не работает
+  # сопоставление country_raw/state_raw, поэтому они часть развёртывания.
+  dou-migrate:
+    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-worker:${IMAGE_TAG:-latest}
+    container_name: dou-migrate
+    command:
+      - sh
+      - -c
+      - ./node_modules/.bin/tsx src/db/migrate.ts && ./node_modules/.bin/tsx src/db/seed-reference.ts
+    restart: 'no'
+    environment: *app-env
+    depends_on:
+      dou-postgres:
+        condition: service_healthy
+
+  dou-web:
+    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-web:${IMAGE_TAG:-latest}
+    container_name: dou-web
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+      # Канонические ссылки и hreflang. Без префикса NEXT_PUBLIC_ намеренно:
+      # такие переменные Next подставляет на сборке, и задать их здесь
+      # было бы нельзя.
+      SITE_URL: https://${PUBLIC_HOST:-dou.copperdiver.studio}
+      # Аналитика. Пусто — счётчик не подключается: незаполненная
+      # переменная не должна тихо слать данные из чужого окружения.
+      CLARITY_ID: ${CLARITY_ID:-}
+    depends_on:
+      dou-postgres:
+        condition: service_healthy
+      dou-migrate:
+        condition: service_completed_successfully
+    expose:
+      - '3000'
+    networks:
+      - default
+      - proxy
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=proxy'
+      - 'traefik.http.routers.dou-web.entrypoints=websecure'
+      - 'traefik.http.routers.dou-web.tls=true'
+      - 'traefik.http.routers.dou-web.tls.certresolver=le'
+      - 'traefik.http.routers.dou-web.rule=Host(`${PUBLIC_HOST:-dou.copperdiver.studio}`)'
+      - 'traefik.http.services.dou-web.loadbalancer.server.port=3000'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  dou-worker:
+    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-worker:${IMAGE_TAG:-latest}
+    container_name: dou-worker
+    restart: unless-stopped
+    # В сеть proxy не входит: наружу воркер ничего не отдаёт, только сам
+    # ходит в in.gov.br и к провайдеру LLM.
+    environment:
+      <<: *app-env
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+      WORKER_LLM_CONCURRENCY: ${WORKER_LLM_CONCURRENCY:-1}
+      # С UA по умолчанию источник отвечает 403 — браузерный обязателен.
+      DOU_USER_AGENT: ${DOU_USER_AGENT:?нужен DOU_USER_AGENT в .env}
+      DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
+      DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
+      DOU_SECTIONS: ${DOU_SECTIONS:-do1}
+      DISCOVER_LOOKBACK_DAYS: ${DISCOVER_LOOKBACK_DAYS:-7}
+      ENUMERATE_BATCH: ${ENUMERATE_BATCH:-5}
+      FETCH_BATCH: ${FETCH_BATCH:-10}
+      BACKFILL_DAYS: ${BACKFILL_DAYS:-365}
+      LLM_PROVIDER: ${LLM_PROVIDER:-auto}
+      LLM_MODEL_CLAUDE: ${LLM_MODEL_CLAUDE:-}
+      LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-}
+      # Ключи берутся из .env и внутрь образа не попадают.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      dou-postgres:
+        condition: service_healthy
+      dou-redis:
+        condition: service_healthy
+      dou-migrate:
+        condition: service_completed_successfully
+
+networks:
+  # Сеть Traefik. Создаётся не здесь: она общая для всех проектов сервера.
+  proxy:
+    external: true
+
+volumes:
+  dou_pgdata:
+  dou_redisdata:

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { cookies } from 'next/headers'
 import { notFound } from 'next/navigation'
+import { Clarity } from '@/components/clarity'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { SiteNav, type NavItem } from '@/components/site-nav'
@@ -24,10 +25,15 @@ export function generateStaticParams() {
 
 /*
  * Канонический адрес и hreflang выводятся только при заданном
- * NEXT_PUBLIC_SITE_URL: иначе Next подставил бы localhost, а неверный
- * hreflang хуже отсутствующего.
+ * SITE_URL: иначе Next подставил бы localhost, а неверный hreflang хуже
+ * отсутствующего.
+ *
+ * Имя без префикса NEXT_PUBLIC_ намеренно: такие переменные Next
+ * подставляет на этапе сборки, и задать их в compose на сервере было бы
+ * нельзя. Значение читается только серверным `generateMetadata`, поэтому
+ * остаётся обычной переменной окружения — и меняется без пересборки образа.
  */
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL
+const SITE_URL = process.env.SITE_URL
 
 export async function generateMetadata({
   params,
@@ -92,6 +98,10 @@ export default async function LocaleLayout({
     >
       <head />
       <body className="min-h-dvh antialiased">
+        {/* Счётчик в корневом layout, поэтому попадает на все страницы
+            и переживает клиентскую навигацию между ними. */}
+        <Clarity id={process.env.CLARITY_ID} />
+
         <SiteNav
           locale={locale}
           items={navItems}
