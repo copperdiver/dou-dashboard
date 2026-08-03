@@ -5,13 +5,14 @@ import { formatDateTime, formatDuration, formatNumber, formatPercent } from '@/l
 import type { DouStatus } from '@/lib/queries/dou-status'
 
 /**
- * Связь с источником.
+ * Source connectivity.
  *
- * Показывает то, что конвейер знает из собственного трафика: когда
- * последний раз удалось снять дневной индекс, чем закончилась последняя
- * неудача, стоит ли пауза после 403 и сколько запросов израсходовано
- * за сутки. Отдельного пинга при отрисовке нет — он тратил бы бюджет
- * и мог бы разбудить WAF; разовая проверка запускается кнопкой.
+ * Shows what the pipeline knows from its own traffic: when the daily index
+ * was last fetched successfully, how the last failure ended, whether a
+ * cooldown after a 403 is in effect, and how much of the daily request
+ * budget has been used. There's no dedicated ping on render: it would
+ * burn budget and could wake up the WAF; a one-off check is triggered by
+ * the button instead.
  */
 
 export type StatusLabels = {
@@ -44,15 +45,15 @@ export function DouStatusPanel({
   labels: StatusLabels
 }) {
   /*
-   * Три состояния, а не два. «Недоступен» — когда стоит пауза после 403
-   * или дни окончательно упали: тогда свежие выпуски не придут. «С
-   * оговорками» — успех был, но последняя попытка закончилась ошибкой:
-   * связь есть, но не устойчивая.
+   * Three states, not two. "Unreachable": a cooldown after a 403 is in
+   * effect, or days have failed outright, so fresh editions won't come in.
+   * "Degraded": there was a success, but the last attempt ended in an
+   * error, so connectivity exists but isn't stable.
    */
   const blocked = status.cooldownMs > 0 || status.failedDays > 0
   const shaky = !blocked && status.lastFailure !== null
-  // Классы перечислены целиком: Tailwind не видит имён, собранных из
-  // кусков, и `text-${tone}` просто не попал бы в сборку.
+  // Classes are spelled out in full: Tailwind can't see names assembled
+  // from pieces, so `text-${tone}` simply wouldn't make it into the build.
   const tone = blocked ? 'text-critical' : shaky ? 'text-warning' : 'text-good'
   const verdict = blocked ? labels.unreachable : shaky ? labels.degraded : labels.reachable
 
@@ -61,8 +62,8 @@ export function DouStatusPanel({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-ink">{labels.title}</h2>
 
-        {/* Форма, а не кнопка с обработчиком: серверное действие работает
-            без JS, и страница обновится сама. */}
+        {/* A form, not a button with a handler: the server action works
+            without JS, and the page refreshes on its own. */}
         <form action={checkDouConnectivity}>
           <button type="submit" className={BTN_OUTLINE}>
             {labels.check}
@@ -71,7 +72,7 @@ export function DouStatusPanel({
       </div>
 
       <p className="mt-3 flex items-center gap-2 text-sm">
-        {/* Иконка вместе с подписью: цвет один смысл не несёт. */}
+        {/* Icon paired with a label: color alone doesn't carry the meaning. */}
         <span className={tone} aria-hidden="true">
           {blocked ? '✕' : shaky ? '!' : '✓'}
         </span>
@@ -103,7 +104,7 @@ export function DouStatusPanel({
           <Row label={labels.failedDays} value={formatNumber(locale, status.failedDays)} />
         )}
         <Row label={labels.pendingPages} value={formatNumber(locale, status.pendingPages)} />
-        {/* Без этой строки при отладке неясно, какой адрес видит источник. */}
+        {/* Without this row, it's unclear during debugging which address the source sees. */}
         <Row label={labels.proxyOn} value={status.viaProxy ? '✓' : labels.proxyOff} />
         {!status.redisAvailable && <Row label={labels.redisDown} value="—" />}
       </dl>

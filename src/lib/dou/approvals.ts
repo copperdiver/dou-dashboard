@@ -1,17 +1,17 @@
 import { cleanPersonName, normalizeProcessNumber, sha256Hex, stripDiacritics } from '../text'
 
 /**
- * Разбор строк-персон в актах о присвоении гражданства.
+ * Parsing person-lines in citizenship grant acts.
  *
- * Формат по замеру на 515 строках:
- *   `ИМЯ - F009513-S, natural da Colômbia, nascido(a) em 7 de outubro de
+ * Format measured across 515 lines:
+ *   `NAME - F009513-S, natural da Colômbia, nascido(a) em 7 de outubro de
  *    1979, filho(a) de X e de Y, residente no Estado do Paraná
  *    (Processo nº 235881.0423562/2023);`
  *
- * Поля извлекаются независимо друг от друга, а не одной монолитной
- * регуляркой: источник допускает пропуски (3 строки без даты рождения,
- * 2 без штата, 1 без номера процесса), и монолит терял бы такие строки
- * целиком вместо частичного разбора.
+ * Fields are extracted independently rather than with one monolithic
+ * regex: the source allows gaps (3 lines with no birth date, 2 with no
+ * state, 1 with no process number), and a monolith would drop such lines
+ * entirely instead of parsing them partially.
  */
 
 export type ParsedApproval = {
@@ -26,13 +26,13 @@ export type ParsedApproval = {
   processNumberNorm: string | null
   paragraphText: string
   paragraphSha256: string
-  /** Доля найденных полей: ниже 1 — часть данных в источнике отсутствует. */
+  /** Share of fields found: below 1 means some data is missing in the source. */
   confidence: number
 }
 
 export type ApprovalExtraction = {
   people: ParsedApproval[]
-  /** Абзацы, похожие на строку-персону, но не разобранные. Не теряем их. */
+  /** Paragraphs that look like a person-line but weren't parsed. Not discarded. */
   unparsed: { text: string; reason: string }[]
 }
 
@@ -51,12 +51,12 @@ const MONTHS: Record<string, number> = {
   dezembro: 12,
 }
 
-/** Абзац похож на строку-персону. */
+/** A paragraph that looks like a person-line. */
 const CANDIDATE = /natural\s+d/i
 
 /**
- * Служебные абзацы акта, которые тоже содержат `natural d` или иначе
- * притворяются строкой-персоной.
+ * Boilerplate paragraphs of the act that also contain `natural d` or
+ * otherwise masquerade as a person-line.
  */
 const SKIP_PATTERNS: readonly RegExp[] = [
   /^CERTIFICO\b/i,
@@ -69,7 +69,7 @@ const SKIP_PATTERNS: readonly RegExp[] = [
 /** `7 de outubro de 1979` → `1979-10-07`. */
 function parseBirthDate(text: string): { iso: string | null; raw: string | null } {
   const flat = stripDiacritics(text).toLowerCase()
-  // Наблюдалось `nascido em`, `nascida em`, `nascido(a) em` и `nascida a`.
+  // Observed `nascido em`, `nascida em`, `nascido(a) em`, and `nascida a`.
   const match = /nascid[oa](?:\(a\))?\s+(?:em|a)\s+(\d{1,2})\s+de\s+([a-z]+)\s+de\s+(\d{4})/.exec(flat)
   if (!match) return { iso: null, raw: null }
 
@@ -81,7 +81,7 @@ function parseBirthDate(text: string): { iso: string | null; raw: string | null 
   if (!month || day < 1 || day > 31 || year < 1900 || year > 2100) return { iso: null, raw }
 
   const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-  // Проверка на 31 февраля и подобное.
+  // Catches February 31 and similar.
   const check = new Date(`${iso}T00:00:00Z`)
   if (Number.isNaN(check.getTime()) || check.getUTCDate() !== day) return { iso: null, raw }
 
@@ -89,16 +89,16 @@ function parseBirthDate(text: string): { iso: string | null; raw: string | null 
 }
 
 function extractName(text: string): { name: string; documentId: string | null } | null {
-  // Имя отделено от документа через ` - ` в 499 строках из 515.
-  // Запятая после номера документа необязательна: наблюдалось
+  // Name is separated from the document via ` - ` in 499 of 515 lines.
+  // A comma after the document number is optional: observed
   // `GIANCARLO ENRIQUE MORA FLORES - V320840-8 natural do Equador`.
-  // `RNM` перед номером написано словом лишь в 1 строке из 515, но без
-  // этой альтернативы номер попадал прямо в имя.
+  // `RNM` written out as a word before the number appears in only 1 of
+  // 515 lines, but without this alternative the number bled into the name.
   const dashed =
     /^\s*([^,]{2,120}?)\s+-\s+(?:RNM\s+)?([A-Za-z]?-?\d[\w.\-/]*)\s*(?:,|\s+natural\s)/i.exec(text)
   if (dashed) return { name: dashed[1]!.trim(), documentId: dashed[2]!.trim() }
 
-  // Без документа: имя до `, natural`.
+  // No document: name up to `, natural`.
   const plain = /^\s*(.{2,120}?)\s*,\s*natural\s+d/i.exec(text)
   if (plain) return { name: plain[1]!.trim(), documentId: null }
 
@@ -106,21 +106,22 @@ function extractName(text: string): { name: string; documentId: string | null } 
 }
 
 function extractCountry(text: string): string | null {
-  // Предлог: da(234) / do(219) / de(58) / dos(4). Шаблон `d[aeo]{1,2}s?`
-  // покрывает и опечатку источника `natural doa Estados Unidos` —
-  // без неё человек терялся целиком.
+  // Preposition: da(234) / do(219) / de(58) / dos(4). The `d[aeo]{1,2}s?`
+  // pattern also covers the source typo `natural doa Estados Unidos`;
+  // without it, that person would be lost entirely.
   const withBirth = /natural\s+d[aeo]{1,2}s?\s+([^,]{2,60}?)\s*,\s*nascid/i.exec(text)
   if (withBirth) return withBirth[1]!.trim()
 
-  // Без запятой перед `nascid…`: наблюдалось `natural de Cuba nascida em
-  // agosto de 1977` — без этой границы в страну попадала половина строки.
+  // No comma before `nascid…`: observed `natural de Cuba nascida em
+  // agosto de 1977`; without this boundary, half the line ended up in
+  // the country field.
   const bare = /natural\s+d[aeo]{1,2}s?\s+([^,]{2,60}?)\s*(?:,|\.|;|\s+nascid|$)/i.exec(text)
   return bare ? bare[1]!.trim() : null
 }
 
 function extractState(text: string): string | null {
   // `residente no estado de São Paulo`(455) / `no Estado do Paraná`(53) /
-  // `no Distrito Federal`(5) — регистр не значим.
+  // `no Distrito Federal`(5); case doesn't matter.
   const match =
     /residente\s+n[oa]s?\s+(?:estado\s+d[aeo]s?\s+)?([^,()]{2,60}?)\s*(?:\(|,|;|\.|$)/i.exec(text)
   return match ? match[1]!.trim() : null
@@ -138,11 +139,11 @@ function extractProcess(text: string): { raw: string | null; norm: string | null
 }
 
 /**
- * Разбирает абзацы акта-одобрения.
+ * Parses the paragraphs of an approval act.
  *
- * Абзац, похожий на строку-персону, но не поддавшийся разбору, попадает
- * в `unparsed`, а не выбрасывается: молчаливая потеря людей — худший
- * возможный отказ этого парсера.
+ * A paragraph that looks like a person-line but couldn't be parsed goes
+ * into `unparsed` instead of being discarded: silently losing people is
+ * the worst possible failure mode for this parser.
  */
 export function extractApprovals(paragraphs: readonly string[]): ApprovalExtraction {
   const people: ParsedApproval[] = []
@@ -154,13 +155,13 @@ export function extractApprovals(paragraphs: readonly string[]): ApprovalExtract
 
     const named = extractName(text)
     if (!named) {
-      unparsed.push({ text, reason: 'не выделено имя' })
+      unparsed.push({ text, reason: 'name not extracted' })
       continue
     }
 
     const countryRaw = extractCountry(text)
     if (!countryRaw) {
-      unparsed.push({ text, reason: 'не выделена страна рождения' })
+      unparsed.push({ text, reason: 'country of birth not extracted' })
       continue
     }
 
@@ -184,7 +185,7 @@ export function extractApprovals(paragraphs: readonly string[]): ApprovalExtract
       processNumberNorm: process.norm,
       paragraphText: text,
       paragraphSha256: sha256Hex(text),
-      // Имя и страна уже есть, остальные четыре поля — необязательные.
+      // Name and country are already present; the other four fields are optional.
       confidence: Number(((2 + present) / 6).toFixed(2)),
     })
   }

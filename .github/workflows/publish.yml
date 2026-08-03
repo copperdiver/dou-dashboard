@@ -1,33 +1,33 @@
-name: Публикация образов
+name: Publish images
 
-# Собирает образы и кладёт их в GitHub Container Registry.
+# Builds images and pushes them to the GitHub Container Registry.
 #
-# Образов два, а не три: сервисы worker и migrate в docker-compose.yml
-# отличаются только командой запуска, поэтому им хватает одного образа —
-# собранного из Dockerfile.worker.
+# Two images, not three: the worker and migrate services in
+# docker-compose.yml differ only in their run command, so one image built
+# from Dockerfile.worker covers both.
 
 on:
   push:
     branches: [main]
     tags: ['v*']
-  # Ручной запуск: чтобы пересобрать прод без пустого коммита.
+  # Manual trigger: rebuild production without an empty commit.
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
 
-# Незавершённые сборки той же ветки отменяются: на прод всё равно уедет
-# только последняя, а очередь занимать незачем. Теги не трогаем — каждый
-# релиз должен собраться до конца.
+# In-progress runs on the same branch are cancelled: only the latest one
+# ever ships to production, so there's no point holding the queue. Tags
+# are left alone. Every release build must run to completion.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  # Проверки идут отдельной задачей и до сборки: образ, который не проходит
-  # тесты, не должен попасть в реестр даже как промежуточный тег.
+  # Checks run as a separate job, before the build: an image that fails
+  # the tests shouldn't reach the registry, not even as an intermediate tag.
   check:
-    name: Проверки
+    name: Checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,28 +39,28 @@ jobs:
 
       - run: npm ci
 
-      - name: Типы
+      - name: Types
         run: npm run typecheck
 
-      - name: Линтер
+      - name: Lint
         run: npm run lint
 
-      - name: Тесты
+      - name: Tests
         run: npm test
 
   build:
-    name: Образ ${{ matrix.name }}
+    name: Image ${{ matrix.name }}
     needs: check
     runs-on: ubuntu-latest
 
     permissions:
       contents: read
-      # Без этого пуш в GHCR отвечает 403 даже с валидным токеном.
+      # Without this, pushing to GHCR returns 403 even with a valid token.
       packages: write
 
     strategy:
-      # Один упавший образ не должен отменять сборку второго: чаще всего
-      # ломается что-то одно, и второй лог нужен целиком.
+      # One failed image shouldn't cancel the build of the other: usually
+      # only one thing breaks, and the other log is needed in full.
       fail-fast: false
       matrix:
         include:
@@ -72,23 +72,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Имя пакета в GHCR обязано быть в нижнем регистре, а github.repository
-      # повторяет написание владельца. Приводим явно, иначе пуш падает
-      # на репозиториях с заглавными буквами.
-      - name: Имя образа
+      # The package name in GHCR must be lowercase, but github.repository
+      # preserves the owner's original casing. We lowercase it explicitly,
+      # otherwise the push fails on repositories with uppercase letters.
+      - name: Image name
         id: image
         run: echo "name=${REGISTRY}/${GITHUB_REPOSITORY,,}-${{ matrix.name }}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Вход в GHCR
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Теги и метки
+      - name: Tags and labels
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -100,17 +100,17 @@ jobs:
             type=sha,format=long
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Сборка и пуш
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          # Один архитектурный вариант: прод на amd64. Для arm64 добавить
-          # linux/arm64 — сборка станет примерно вдвое дольше.
+          # One architecture: production runs on amd64. To add arm64,
+          # append linux/arm64. The build will take roughly twice as long.
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Кеш слоёв между прогонами: npm ci и next build — самые долгие шаги.
+          # Layer cache between runs: npm ci and next build are the slowest steps.
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}

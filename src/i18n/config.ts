@@ -1,11 +1,10 @@
 /**
- * Локали приложения.
+ * Application locales.
  *
- * Библиотека i18n сознательно не используется. Единственное, что здесь
- * действительно трудно, — русские формы числительных («1 отказ,
- * 2 отказа, 5 отказов»), и их корректно решает встроенный
- * `Intl.PluralRules`. Остальное — плоский типизированный словарь,
- * который проверяет компилятор.
+ * No i18n library is used, deliberately. The only genuinely hard part
+ * is Russian plural forms of numerals ("1 otkaz, 2 otkaza, 5 otkazov"),
+ * and the built-in `Intl.PluralRules` handles that correctly. Everything
+ * else is a flat, typed dictionary that the compiler checks.
  */
 
 export const LOCALES = ['ru', 'en'] as const
@@ -18,15 +17,15 @@ export function isLocale(value: string): value is Locale {
   return (LOCALES as readonly string[]).includes(value)
 }
 
-/** Подписи переключателя — на своём же языке, а не в переводе. */
+/** Switcher labels: shown in their own language, not translated. */
 export const LOCALE_LABELS: Record<Locale, string> = {
   ru: 'Русский',
   en: 'English',
 }
 
 /**
- * Локаль для Intl. Для дат и чисел нужен полный тег, иначе `ru`
- * форматируется по умолчаниям, а не по российским.
+ * Locale for Intl. Dates and numbers need the full tag, otherwise
+ * `ru` formats using defaults instead of Russian conventions.
  */
 export const INTL_LOCALES: Record<Locale, string> = {
   ru: 'ru-RU',

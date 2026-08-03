@@ -5,12 +5,11 @@ import { douConfig, pipelineConfig } from '../../lib/env'
 import type { Pump } from './types'
 
 /**
- * Ставит в очередь дни, которые ещё не опрашивались.
+ * Queues days that haven't been polled yet.
  *
- * Смотрит назад на несколько дней, а не только на сегодня: DOU публикует
- * с задержкой и правит выпуски задним числом. Повторный запуск безопасен —
- * существующие строки не трогаются, поэтому уже разобранный день не
- * сбрасывается в pending.
+ * Looks back several days, not just today: DOU publishes with a delay
+ * and edits editions retroactively. Safe to re-run: existing rows are
+ * left untouched, so an already-parsed day doesn't get reset to pending.
  */
 export const discover: Pump = async ({ log }) => {
   const { discoverLookbackDays } = pipelineConfig()
@@ -30,7 +29,7 @@ export const discover: Pump = async ({ log }) => {
       section,
       status: 'pending' as const,
       origin: 'incremental' as const,
-      // Приоритет 0: свежие дни никогда не ждут, пока дожуётся бэкфилл.
+      // Priority 0: fresh days never wait for the backfill to finish chewing through its queue.
       priority: 0,
     })),
   )
@@ -42,7 +41,7 @@ export const discover: Pump = async ({ log }) => {
     .returning({ editionDate: ingestDays.editionDate, section: ingestDays.section })
 
   if (inserted.length > 0) {
-    log(`добавлено дней: ${inserted.map((r) => `${r.editionDate}/${r.section}`).join(', ')}`)
+    log(`days added: ${inserted.map((r) => `${r.editionDate}/${r.section}`).join(', ')}`)
   }
 
   const [pending] = await db

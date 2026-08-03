@@ -1,9 +1,9 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // Нужно для тонкого Docker-образа: .next/standalone с собственным server.js.
+  // Needed for a lean Docker image: .next/standalone ships its own server.js.
   output: 'standalone',
-  // pg тянет нативные опциональные зависимости — не бандлим его.
+  // pg pulls in native optional dependencies, so don't bundle it.
   serverExternalPackages: ['pg'],
 }
 

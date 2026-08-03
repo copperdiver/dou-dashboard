@@ -1,14 +1,14 @@
-# Развёртывание
+# Deployment
 
-Код на сервер не копируется — он приезжает внутри образов из GHCR.
-Из репозитория нужны ровно два файла.
+Code isn't copied to the server. It arrives inside images from GHCR.
+Only two files are needed from the repository.
 
-## Что скопировать
+## What to copy
 
-| Файл | Куда | Зачем |
+| File | Where | Why |
 |---|---|---|
-| `docker-compose.prod.yml` | в рабочий каталог, как есть | описание стека |
-| `.env.production.example` | туда же, **под именем `.env`** | значения окружения |
+| `docker-compose.prod.yml` | into the working directory, as-is | describes the stack |
+| `.env.production.example` | same place, **renamed to `.env`** | environment values |
 
 ```
 /opt/dou-dashboard/
@@ -16,66 +16,66 @@
 └── .env
 ```
 
-Всё остальное — исходники, `node_modules`, `drizzle/` — уже в образах.
-Миграции лежат в образе воркера, их применяет сервис `dou-migrate`.
+Everything else (source code, `node_modules`, `drizzle/`) is already in the images.
+Migrations live in the worker image and are applied by the `dou-migrate` service.
 
-## Образы
+## Images
 
 ```
 ghcr.io/copperdiver/dou-dashboard-web
 ghcr.io/copperdiver/dou-dashboard-worker
 ```
 
-Имена выводятся из `github.repository` в workflow, отдельно нигде не
-записаны. Образов два на три сервиса: `dou-worker` и `dou-migrate`
-отличаются только командой запуска.
+Image names are derived from `github.repository` in the workflow and aren't
+recorded anywhere else. Two images cover three services: `dou-worker` and
+`dou-migrate` differ only in their run command.
 
-Пакеты приватные, как и репозиторий, поэтому сервер должен войти
-в реестр. Нужен токен с правом `read:packages`:
+The packages are private, like the repository, so the server needs to log
+in to the registry. It needs a token with `read:packages`:
 
 ```sh
-echo "$GHCR_TOKEN" | docker login ghcr.io -u <логин> --password-stdin
+echo "$GHCR_TOKEN" | docker login ghcr.io -u <username> --password-stdin
 ```
 
-## Что заполнить в .env
+## What to fill in in .env
 
-Обязательны:
+Required:
 
-- `POSTGRES_PASSWORD` — пароль по умолчанию на сервере недопустим;
-- `DOU_USER_AGENT` — с UA по умолчанию источник отвечает 403.
+- `POSTGRES_PASSWORD`: the default password isn't acceptable on a server;
+- `DOU_USER_AGENT`: with the default UA the source responds with 403.
 
-Без них `docker compose` откажется стартовать, а не поднимется с тихим
-умолчанием.
+Without these, `docker compose` refuses to start rather than coming up with
+a silent default.
 
-Стоит проверить:
+Worth checking:
 
-- `PUBLIC_HOST` — домен, по которому маршрутизирует Traefik; из него же
-  собирается адрес для канонических ссылок и `hreflang`;
-- `IMAGE_TAG` — `latest` берёт последнюю сборку основной ветки; для
-  предсказуемых выкладок лучше тег релиза или полный sha коммита.
+- `PUBLIC_HOST`: the domain Traefik routes on; it's also used to build the
+  URL for canonical links and `hreflang`;
+- `IMAGE_TAG`: `latest` pulls the most recent build of the main branch; for
+  predictable deploys, a release tag or a full commit sha is better.
 
-Ключи LLM не обязательны: без них причины отказа остаются с португальским
-оригиналом и без категории.
+LLM keys are optional: without them, denial reasons stay as the original
+Portuguese text with no category.
 
-## Сеть
+## Network
 
-Ingress — Traefik во внешней сети `proxy`, он же терминирует TLS
-и получает сертификат (`certresolver=le`). Наружу не публикуется ни один
-порт: `dou-web` только объявляет 3000 через `expose`, и до него Traefik
-достаёт по внутренней сети.
+Ingress is Traefik on the external `proxy` network; it also terminates TLS
+and obtains the certificate (`certresolver=le`). No port is published
+externally: `dou-web` only declares 3000 via `expose`, and Traefik reaches
+it over the internal network.
 
-Сеть `proxy` создаётся не этим файлом — она общая для проектов сервера.
-Если её ещё нет:
+The `proxy` network isn't created by this file. It's shared across the
+server's projects. If it doesn't exist yet:
 
 ```sh
 docker network create proxy
 ```
 
-Postgres и Redis в `proxy` не входят вовсе и снаружи недоступны.
-Воркер тоже: наружу он ничего не отдаёт, только сам ходит в in.gov.br
-и к провайдеру LLM.
+Postgres and Redis aren't on `proxy` at all and aren't reachable from
+outside. Neither is the worker: it doesn't serve anything externally, it
+only makes outbound calls to in.gov.br and the LLM provider.
 
-## Запуск
+## Startup
 
 ```sh
 docker compose -f docker-compose.prod.yml pull
@@ -83,21 +83,21 @@ docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 ```
 
-## Обновление и откат
+## Updating and rolling back
 
 ```sh
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-`dou-migrate` отработает первым и завершится; `dou-web` и `dou-worker`
-стартуют только после его успешного выхода, поэтому гонки за схему нет.
+`dou-migrate` runs first and exits; `dou-web` and `dou-worker` only start
+after it exits successfully, so there's no race on the schema.
 
-Откат — правка `IMAGE_TAG` в `.env` и тот же `up -d`. Учтите: миграции
-назад не откатываются, поэтому откат безопасен, пока предыдущая версия
-переживает новую схему.
+To roll back, edit `IMAGE_TAG` in `.env` and run `up -d` again. Migrations
+aren't reversible, so a rollback is only safe as long as the previous
+version can work with the new schema.
 
-## Проверка после выкладки
+## Checking after deployment
 
 ```sh
 docker compose -f docker-compose.prod.yml exec dou-web \
@@ -107,5 +107,5 @@ curl -fsS https://dou.copperdiver.studio/api/health
 docker compose -f docker-compose.prod.yml logs --tail=50 dou-worker
 ```
 
-Раздел «Состояние» в интерфейсе показывает запуски насосов, долю ошибок
-и расписание — по нему видно, что конвейер жив.
+The "Status" section in the UI shows pump runs, the error rate, and the
+schedule. It's how you can tell the pipeline is alive.

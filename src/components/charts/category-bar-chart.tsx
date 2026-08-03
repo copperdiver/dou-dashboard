@@ -3,19 +3,18 @@ import type { Locale } from '@/i18n'
 import { formatNumber, formatPercent } from '@/lib/format'
 
 /**
- * Категории причин отказа — горизонтальные столбики.
+ * Denial reason categories: horizontal bars.
  *
- * Разметка обычная, не SVG: названия категорий длинные, им нужен перенос
- * по словам и тянущаяся ширина, а внутри SVG текст ни того, ни другого
- * не умеет.
+ * Plain markup, not SVG: category names are long, they need word wrapping
+ * and a stretching width, and text inside SVG can do neither.
  *
- * Цвет берётся из `color_slot` категории, а не из её места в списке:
- * порядок меняется вместе с периодом, и цвет, привязанный к рангу,
- * перекрашивал бы категории при каждом переключении.
+ * The color comes from the category's `color_slot`, not from its position
+ * in the list: the order changes with the period, and a color tied to rank
+ * would repaint the categories on every switch.
  *
- * Значение подписано у каждого столбика. Это обязательное условие: три
- * слота палитры в светлой теме не дотягивают до контраста 3:1, и цвет
- * не может оставаться единственным носителем смысла.
+ * The value is labeled on every bar. This is a hard requirement: three
+ * palette slots fall short of 3:1 contrast in the light theme, so color
+ * can't be the sole carrier of meaning.
  */
 
 export type CategoryRow = {
@@ -30,8 +29,8 @@ export function CategoryBarChart({
   locale,
   rows,
   /**
-   * Отказы с определённой причиной: доля считается от них, а не от всех
-   * отказов и не от суммы столбиков.
+   * Denials with an identified reason: the share is computed against
+   * these, not against all denials and not against the sum of the bars.
    */
   denialsTotal,
   note,
@@ -46,7 +45,7 @@ export function CategoryBarChart({
   denialsTotal: number
   note: string
   baseNote: string
-  /** Сколько отказов ещё без причины. undefined — таких нет. */
+  /** How many denials are still reasonless. undefined means there are none. */
   unknownNote?: string
   emptyLabel: string
   drilldownHref: string
@@ -82,8 +81,8 @@ export function CategoryBarChart({
                     )}
                   </span>
                 </div>
-                {/* Дорожка задаёт длину шкалы: без неё столбики читаются
-                    как доли от разных целых. */}
+                {/* The track establishes the scale's length: without it,
+                    bars read as shares of different wholes. */}
                 <div className="mt-1 h-2.5 w-full rounded-full bg-grid">
                   <div
                     className="h-2.5 rounded-full"

@@ -3,14 +3,14 @@ import { BTN_OUTLINE, DATE, FORM_ROW } from '@/components/form-controls'
 import { RANGE_PRESETS, type RangePreset, type ResolvedRange } from '@/lib/range'
 
 /**
- * Выбор периода.
+ * Period picker.
  *
- * Пресеты — обычные ссылки, произвольный диапазон — GET-форма. Ни то,
- * ни другое не требует JS, а выбранный период оказывается в адресе,
- * поэтому вид пересылается ссылкой и переживает перезагрузку.
+ * Presets are plain links, the custom range is a GET form. Neither needs
+ * JS, and the selected period ends up in the URL, so the view can be
+ * shared as a link and survives a reload.
  */
 
-/** Все переключатели периода выглядят одинаково, включая «Произвольный». */
+/** All period toggles look the same, including "Custom". */
 function pillClass(active: boolean): string {
   return (
     'inline-block rounded-full px-3 py-1.5 text-xs whitespace-nowrap ' +
@@ -35,14 +35,14 @@ export function DateRange({
   range,
   labels,
 }: {
-  /** Путь без параметров, например `/ru`. */
+  /** Path without params, e.g. `/ru`. */
   basePath: string
-  /** Текущие параметры адреса: остальные фильтры не должны теряться. */
+  /** Current URL params: the other filters must not be lost. */
   params: Record<string, string | undefined>
   range: ResolvedRange
   labels: RangeLabels
 }) {
-  /** Остальные параметры адреса: фильтры при смене периода не теряются. */
+  /** The other URL params: filters aren't lost when the period changes. */
   const kept = () => {
     const next = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) {
@@ -58,11 +58,11 @@ export function DateRange({
   }
 
   /*
-   * «Произвольный» — такая же ссылка, как пресеты, и ведёт на текущие
-   * границы, выписанные явными датами. Пресет становится `custom`, форма
-   * ниже раскрывается сама. Раскрывающегося блока здесь нет намеренно:
-   * ссылки внутри <summary> одновременно переключали бы его и уводили
-   * на другую страницу.
+   * "Custom" is a link just like the presets, pointing at the current
+   * bounds spelled out as explicit dates. The preset becomes `custom`, and
+   * the form below expands on its own. There's no <details> element here
+   * on purpose: links inside a <summary> would both toggle it and
+   * navigate away at the same time.
    */
   const customHref = () => {
     const next = kept()
@@ -77,11 +77,11 @@ export function DateRange({
     <div>
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-xs text-ink-muted">{labels.label}</span>
-        {/* Отрицательные поля и обратный паддинг: на узком экране ряд
-            прокручивается от края до края, а не обрезается по контейнеру.
-            min-w-0 не даёт списку пресетов растянуть строку: иначе
-            flex-элемент отказывается сжиматься ниже своего содержимого
-            и горизонтальная прокрутка уезжает на всю страницу. */}
+        {/* Negative margins and compensating padding: on a narrow screen the
+            row scrolls edge to edge instead of being clipped by the container.
+            min-w-0 keeps the preset list from stretching the row: otherwise a
+            flex item refuses to shrink below its content's size, and the
+            horizontal scroll spills out across the whole page. */}
         <div className="-mx-4 min-w-0 flex-1 overflow-x-auto px-4 sm:mx-0 sm:px-0">
           <ul className="flex min-w-max items-center gap-1.5">
             {RANGE_PRESETS.map((preset) => (
@@ -115,8 +115,8 @@ export function DateRange({
               <input key={key} type="hidden" name={key} value={value} />
             ) : null,
           )}
-          {/* Подписи «С» и «По» стоят перед полями, а не над ними: строка
-              одна, и надстрочные подписи ломали бы её высоту. */}
+          {/* The "From" and "To" labels sit before the fields, not above them:
+              it's a single row, and stacked labels would break its height. */}
           <label className="inline-flex items-center gap-2 text-sm text-ink-muted">
             {labels.from}
             <input type="date" name="from" defaultValue={range.from} className={DATE} />

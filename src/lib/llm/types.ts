@@ -1,41 +1,41 @@
 /**
- * Сменный провайдер обогащения причин отказа.
+ * Swappable denial reason enrichment provider.
  *
- * Провайдер вызывается ТОЛЬКО из воркера и только на остаток, который не
- * покрыли детерминированные правила (по замеру — 6% текстов). Из request
- * path он не вызывается никогда.
+ * The provider is called ONLY from the worker, and only for the
+ * remainder not covered by deterministic rules (measured at 6% of
+ * texts). It's never called from the request path.
  */
 
 export type ReasonCandidate = {
-  /** Каноническая формулировка на португальском. */
+  /** Canonical wording in Portuguese. */
   textPt: string
   textEn: string
   textRu: string
-  /** Код из закрытого списка категорий. */
+  /** Code from the closed list of categories. */
   categoryCode: string
 }
 
 export type EnrichInput = {
-  /** Непокрытый остаток текста причины — в исходном виде, с диакритикой. */
+  /** Uncovered remainder of the reason text, as-is, with diacritics. */
   remainder: string
-  /** Уже известные атомарные причины: стабильная часть промпта. */
+  /** Already known atomic reasons: the stable part of the prompt. */
   known: readonly { slug: string; textPt: string; categoryCode: string }[]
-  /** Закрытый список категорий. */
+  /** Closed list of categories. */
   categories: readonly { code: string; nameEn: string }[]
 }
 
 export type EnrichResult = {
-  /** Slug'и уже существующих причин, которые распознал провайдер. */
+  /** Slugs of already-existing reasons that the provider recognized. */
   matchedSlugs: string[]
-  /** Новые причины, которых в справочнике не было. */
+  /** New reasons that weren't in the reference list. */
   newReasons: ReasonCandidate[]
   /**
-   * true — результата нет: провайдер отказался, вернул мусор или упал.
-   * Текст помечается на ручную проверку, а не выбрасывается и не
-   * додумывается.
+   * true means there's no result: the provider refused, returned
+   * garbage, or failed. The text is flagged for manual review rather
+   * than discarded or guessed at.
    */
   needsReview: boolean
-  /** Почему нужна ручная проверка — попадает в лог и на экран health. */
+  /** Why manual review is needed. Goes into the log and the health screen. */
   reviewReason?: string
   model: string
   promptVersion: string

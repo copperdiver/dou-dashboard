@@ -3,29 +3,30 @@ import { Pool } from 'pg'
 import * as schema from './schema'
 
 /**
- * Пул и экземпляр drizzle создаются лениво, при первом запросе.
+ * The pool and the drizzle instance are created lazily, on first use.
  *
- * Это важно для сборки: `next build` импортирует модули роутов, чтобы собрать
- * о них метаданные. Если бы пул создавался на верхнем уровне, сборка требовала
- * бы DATABASE_URL — в Docker-образе на этапе build его нет и быть не должно.
+ * This matters for the build: `next build` imports route modules to collect
+ * metadata about them. If the pool were created at module top level, the
+ * build would require DATABASE_URL, which isn't and shouldn't be available
+ * at build time in the Docker image.
  */
 function createPool(): Pool {
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) {
-    throw new Error('DATABASE_URL не задан. Скопируйте .env.example в .env.')
+    throw new Error('DATABASE_URL is not set. Copy .env.example to .env.')
   }
 
   return new Pool({
     connectionString,
     max: Number(process.env.DATABASE_POOL_MAX ?? 10),
-    // Не держим простаивающие соединения дольше 30 с.
+    // Don't keep idle connections alive longer than 30s.
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,
   })
 }
 
-// В dev-режиме Next.js перезагружает модули — без кэша в globalThis
-// на каждом HMR создавался бы новый пул соединений.
+// In dev mode Next.js reloads modules. Without a globalThis cache,
+// every HMR reload would create a new connection pool.
 const globalForDb = globalThis as unknown as {
   __douPool?: Pool
   __douDb?: NodePgDatabase<typeof schema>
@@ -41,7 +42,7 @@ function getDb(): NodePgDatabase<typeof schema> {
   return globalForDb.__douDb
 }
 
-/** Закрывает пул. Нужно скриптам (миграции, seed) и воркеру при остановке. */
+/** Closes the pool. Needed by scripts (migrations, seed) and by the worker on shutdown. */
 export async function closePool(): Promise<void> {
   const pool = globalForDb.__douPool
   if (!pool) return
@@ -51,7 +52,7 @@ export async function closePool(): Promise<void> {
 }
 
 /**
- * Обычный интерфейс drizzle, но подключение открывается при первом обращении.
+ * The regular drizzle interface, but the connection opens on first access.
  */
 export const db = new Proxy({} as NodePgDatabase<typeof schema>, {
   get(_target, property, receiver) {

@@ -1,34 +1,35 @@
 /**
- * Детерминированные правила распознавания атомарных причин отказа.
+ * Deterministic rules for recognizing atomic denial reasons.
  *
- * Правила живут в коде, а не в БД: их надо ревьюить, тестировать на
- * фикстурах и откатывать. Таблица паттернов в базе звучит гибко, но
- * превращается в неверсионируемый недоязык без тестов. В БД попадает
- * только результат применения (`rule_code`, `rules_version`).
+ * Rules live in code, not in the DB: they need to be reviewed, tested
+ * against fixtures, and revertible. A pattern table in the database
+ * sounds flexible, but turns into an unversioned mini-language with no
+ * tests. Only the result of applying a rule (`rule_code`, `rules_version`)
+ * goes into the DB.
  *
- * Паттерны написаны БЕЗ диакритики: они применяются к нормализованному
- * тексту (см. normalize.ts).
+ * Patterns are written WITHOUT diacritics: they're applied to normalized
+ * text (see normalize.ts).
  *
- * Замер на 355 текстах: правила ниже покрывают 78%, вместе с декодером
- * правовых ссылок — 82%. Остаток идёт в LLM.
+ * Measured on 355 texts: the rules below cover 78%, and together with
+ * the legal reference decoder, 82%. The remainder goes to the LLM.
  */
 
-/** Увеличивать при любом изменении правил: тексты переразберутся. */
+/** Bump on any rule change: texts will be reparsed. */
 export const RULES_VERSION = 1
 
 type Rule = {
   code: string
-  /** Совпадает со slug атомарной причины в справочнике. */
+  /** Matches the slug of the atomic reason in the reference table. */
   slug: string
   pattern: RegExp
-  /** Частота по замеру, для читаемости порядка. */
+  /** Frequency from measurement, for readability of the ordering. */
   note?: string
 }
 
 /*
- * Порядок в массиве ни на что не влияет — применяются все правила.
- * Квантификаторы не вложены: один Worker обслуживает и разбор, и
- * загрузку, поэтому катастрофический backtracking заморозил бы конвейер.
+ * Order in the array doesn't matter: all rules are applied. Quantifiers
+ * aren't nested: one Worker handles both parsing and ingestion, so
+ * catastrophic backtracking would freeze the pipeline.
  */
 const RULES: readonly Rule[] = [
   {
@@ -40,8 +41,8 @@ const RULES: readonly Rule[] = [
   {
     code: 'R02',
     slug: 'portuguese',
-    // `comunicacao em portugues` не ловился первой версией правила —
-    // 15 текстов уходили в LLM без нужды.
+    // `comunicacao em portugues` wasn't caught by the first version of
+    // the rule: 15 texts went to the LLM unnecessarily.
     pattern: /lingua portuguesa|comunica\w{0,4} em portugu\w{0,3}/g,
     note: '31%',
   },
@@ -54,7 +55,7 @@ const RULES: readonly Rule[] = [
   {
     code: 'R04',
     slug: 'residence_proof',
-    // И `comprovante`, и `comprovacao` — вторая форма терялась.
+    // Both `comprovante` and `comprovacao`: the second form was being missed.
     pattern: /comprova\w{0,4} de resid\w{0,5}|comprovante de endere\w{0,2}/g,
     note: '20%',
   },
@@ -98,25 +99,25 @@ const RULES: readonly Rule[] = [
     code: 'R11',
     slug: 'docs_generic',
     pattern: /nao apresentou os documentos/g,
-    note: '23%, расплывчато → категория «Неясно»',
+    note: '23%, vague → "Unclear" category',
   },
   {
     code: 'R12',
     slug: 'requirements_generic',
     pattern: /nao cumprimento das exigencias/g,
-    note: '37%, расплывчато → категория «Неясно»',
+    note: '37%, vague → "Unclear" category',
   },
 ]
 
 export type RuleMatch = {
   slug: string
   ruleCode: string
-  /** Координаты в нормализованном тексте. */
+  /** Coordinates in the normalized text. */
   start: number
   end: number
 }
 
-/** Применяет все правила к нормализованному тексту начиная с `from`. */
+/** Applies all rules to the normalized text starting at `from`. */
 export function applyRules(normalizedText: string, from = 0): RuleMatch[] {
   const matches: RuleMatch[] = []
   const haystack = normalizedText.slice(from)
@@ -137,7 +138,7 @@ export function applyRules(normalizedText: string, from = 0): RuleMatch[] {
   return matches.sort((a, b) => a.start - b.start)
 }
 
-/** Объединяет пересекающиеся спаны. */
+/** Merges overlapping spans. */
 export function mergeSpans(
   spans: readonly { start: number; end: number }[],
 ): { start: number; end: number }[] {
@@ -156,9 +157,9 @@ export function mergeSpans(
 }
 
 /**
- * Доля содержательного текста, покрытая спанами. Метрика качества:
- * её падение на новых данных означает, что источник сменил формулировки
- * и правила молча перестали срабатывать.
+ * Share of the substantive text covered by spans. A quality metric: a
+ * drop on new data means the source changed its wording and the rules
+ * silently stopped matching.
  */
 export function coveredCharRatio(
   spans: readonly { start: number; end: number }[],

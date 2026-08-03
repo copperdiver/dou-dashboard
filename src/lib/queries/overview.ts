@@ -14,14 +14,14 @@ import type { AgeBucket } from '../../db/schema'
 import { addDays } from '../range'
 
 /**
- * Запросы сводки. Все читают суточные витрины, а не факты: витрина —
- * единственное место, где записано определение «нового отказа» и где
- * различаются «ноль» и «нет данных».
+ * Overview queries. All of them read from the daily marts rather than
+ * the raw facts: the mart is the single place where the definition of
+ * "new denial" is recorded and where "zero" is distinguished from "no data".
  */
 
 export type DataBounds = { min: string; max: string }
 
-/** Границы загруженного периода. Нужны пресету «весь период». */
+/** Bounds of the loaded period. Needed for the "all time" preset. */
 export async function getDataBounds(): Promise<DataBounds | null> {
   const { rows } = await db.execute<{ min: string | null; max: string | null }>(sql`
     select to_char(min(day), 'YYYY-MM-DD') as min,
@@ -35,26 +35,26 @@ export async function getDataBounds(): Promise<DataBounds | null> {
 }
 
 /**
- * Состав «прочих решений». Витрина хранит только сумму, поэтому разбивка
- * берётся из фактов: держать в `daily_stats` колонку под каждый вид
- * решения ради подписи на одной плитке не стоит.
+ * Composition of "other decisions". The mart only stores the sum, so the
+ * breakdown is pulled from the raw facts: keeping a column per decision
+ * kind in `daily_stats` just for one tile's caption isn't worth it.
  */
 export type OtherDecisions = {
-  /** Производство прекращено. */
+  /** Case archived. */
   archived: number
-  /** Отказ подтверждён при обжаловании. */
+  /** Denial upheld on appeal. */
   upheld: number
-  /** Отмены, повторные публикации и прочее. */
+  /** Reversals, republications, and everything else. */
   other: number
 }
 
 export type Kpis30d = {
   approvals: number
   denials: number
-  /** Подтверждения отказа и прочие решения — без новых отказов. */
+  /** Upheld denials and other decisions. Excludes new denials. */
   otherDecisions: number
   breakdown: OtherDecisions
-  /** Доля отказов среди решений по существу, 0..1. null — решений не было. */
+  /** Share of denials among substantive decisions, 0..1. null means no decisions. */
   denialRate: number | null
   prev: {
     approvals: number
@@ -65,9 +65,10 @@ export type Kpis30d = {
 }
 
 /**
- * KPI за 30 суток и за предыдущие 30 для дельты. Окно фиксировано и не
- * зависит от периода графиков: плитки отвечают на вопрос «что сейчас»,
- * а выбор периода — инструмент разглядывания рядов.
+ * KPIs for the last 30 days and the previous 30 for the delta. The
+ * window is fixed and independent of the chart period: the tiles answer
+ * "what's happening now", while the period picker is a tool for
+ * examining the series.
  */
 export async function getKpis30d(anchor: string): Promise<Kpis30d> {
   const currentFrom = addDays(anchor, -29)
@@ -95,10 +96,9 @@ export async function getKpis30d(anchor: string): Promise<Kpis30d> {
       from ${dailyStats}
   `),
     /*
-     * Разбивка задана теми же условиями, что и в насосе витрин, и группы
-     * не пересекаются: подтверждение при обжаловании, прекращение
-     * производства и всё остальное. Их сумма обязана совпадать с
-     * other_decisions из витрины.
+     * The breakdown uses the same conditions as the mart pump, and the
+     * groups don't overlap: upheld on appeal, case archived, and
+     * everything else. Their sum must match other_decisions from the mart.
      */
     db.execute<{ archived: number; upheld: number; other: number }>(sql`
       select
@@ -140,37 +140,37 @@ export async function getKpis30d(anchor: string): Promise<Kpis30d> {
 }
 
 /**
- * Почему за день нет чисел. Различать обязательно: «выпуска не было» —
- * это отсутствие события (публиковать было нечего, линия законно идёт
- * через такой день), а «не загружен» — отсутствие знания, и делать вид,
- * что мы его наблюдали, нельзя.
+ * Why a day has no numbers. This must be distinguished: "no edition"
+ * means the absence of an event (there was nothing to publish, so the
+ * line legitimately runs through that day), while "not loaded" means an
+ * absence of knowledge, and pretending we observed it would be wrong.
  */
 export type DayCoverage = 'covered' | 'no_edition' | 'missing'
 
 export type DayPoint = {
   /** `YYYY-MM-DD`. */
   day: string
-  /** null — наблюдения за день нет; смотри `coverage`, почему. */
+  /** null means there's no observation for the day; see `coverage` for why. */
   approvals: number | null
   denials: number | null
-  /** Подтверждения отказа и прочие решения. */
+  /** Upheld denials and other decisions. */
   otherDecisions: number | null
   coverage: DayCoverage
 }
 
 /**
- * Ряд по дням.
+ * Daily series.
  *
- * Календарь генерируется запросом, а витрина присоединяется слева.
- * Строки в витрине нет — это ещё не «нет данных»: витрина заполняется
- * только для дней, где что-то нашлось. Поэтому такие дни доспрашиваются
- * у `ingest_days`:
+ * The calendar is generated by the query, and the mart is left-joined
+ * in. A missing row in the mart isn't the same as "no data": the mart
+ * is only populated for days where something was found. So such days
+ * are cross-checked against `ingest_days`:
  *
- *  - `enumerated` — выпуск разобран, релевантных публикаций не было.
- *    Это наблюдение, и значение равно нулю, а не пропуску.
- *  - `no_edition` — выпуска не было. Публиковать было нечего.
- *  - записи нет вовсе — день ни разу не ставили в очередь, и что там
- *    было, мы не знаем. Только это и есть настоящий пробел.
+ *  - `enumerated`: the edition was parsed, no relevant publications were
+ *    found. This is an observation, and the value is zero, not a gap.
+ *  - `no_edition`: there was no edition. Nothing to publish.
+ *  - no record at all: the day was never queued, and we don't know
+ *    what was there. This is the only case that's a real gap.
  */
 export async function getDailySeries(from: string, to: string): Promise<DayPoint[]> {
   const { rows } = await db.execute<{
@@ -224,9 +224,9 @@ export async function getDailySeries(from: string, to: string): Promise<DayPoint
 
 export type CategoryBreakdown = {
   rows: CategoryTotal[]
-  /** Отказы, у которых определена хотя бы одна причина. */
+  /** Denials with at least one reason determined. */
   classified: number
-  /** Новые отказы за период всего. */
+  /** Total new denials over the period. */
   total: number
 }
 
@@ -235,22 +235,23 @@ export type CategoryTotal = {
   code: string
   nameRu: string
   nameEn: string
-  /** Слот палитры 1..8: тот же цвет, что у линии в дрилл-дауне. */
+  /** Palette slot 1..8: the same color as the drilldown line. */
   colorSlot: number
   denials: number
 }
 
 /**
- * Итоги по категориям причин за период.
+ * Totals by reason category over the period.
  *
- * Метрика витрины — число отказов, затронутых категорией. У отказа
- * бывает несколько причин из разных категорий, поэтому сумма по
- * категориям больше числа отказов, и подпись графика обязана это назвать.
+ * The mart's metric is the number of denials touched by the category. A
+ * denial can have several reasons from different categories, so the sum
+ * across categories exceeds the number of denials, and the chart's
+ * caption must say so.
  *
- * Вместе с итогами возвращается число отказов с определённой причиной:
- * доли считаются от него, а не от всех отказов. Отказ без единой причины
- * не может попасть ни в один числитель, и держать его в знаменателе —
- * значит занижать все доли разом.
+ * Along with the totals, the number of denials with a determined reason
+ * is returned: shares are computed against that, not against all
+ * denials. A denial with no reason at all can't land in any numerator,
+ * and keeping it in the denominator would understate every share at once.
  */
 export async function getReasonCategoryTotals(
   from: string,
@@ -303,15 +304,16 @@ export async function getReasonCategoryTotals(
 
 export type AgeDistribution = {
   buckets: { bucket: AgeBucket; approvals: number }[]
-  /** Одобрения без даты рождения в источнике: в группы не попадают. */
+  /** Approvals with no birth date in the source: excluded from the buckets. */
   excluded: number
 }
 
 /**
- * Возрастные группы за период.
+ * Age buckets for the period.
  *
- * Число исключённых обязательно к показу: без него сумма долей не сходится
- * с количеством одобрений, и читатель делает неверный вывод о выборке.
+ * The excluded count must be shown: without it the sum of shares
+ * doesn't add up to the number of approvals, and the reader draws the
+ * wrong conclusion about the sample.
  */
 export async function getAgeDistribution(from: string, to: string): Promise<AgeDistribution> {
   const [bucketRows, excludedRows] = await Promise.all([

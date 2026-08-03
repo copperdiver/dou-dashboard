@@ -7,10 +7,10 @@ export type Kpis = {
   runsPrev24h: number
   failed24h: number
   failedPrev24h: number
-  /** Доля успешных запусков, 0..1. null — если запусков не было. */
+  /** Share of successful runs, 0..1. null means there were no runs. */
   successRate24h: number | null
   successRatePrev24h: number | null
-  /** Средняя длительность успешного запуска, мс. */
+  /** Average duration of a successful run, ms. */
   avgDurationMs24h: number | null
   avgDurationMsPrev24h: number | null
   itemsProcessed24h: number
@@ -80,9 +80,9 @@ export async function getKpis(): Promise<Kpis> {
 
 export type DailyRuns = {
   /**
-   * Дата в формате YYYY-MM-DD. Подпись оси строится из неё на отрисовке
-   * через `formatDayShort`: формат даты зависит от языка страницы, а SQL
-   * о выбранной локали не знает.
+   * Date in YYYY-MM-DD format. The axis label is built from it at render
+   * time via `formatDayShort`: the date format depends on the page
+   * language, and SQL doesn't know the selected locale.
    */
   day: string
   success: number
@@ -90,8 +90,8 @@ export type DailyRuns = {
 }
 
 /**
- * Запуски по суткам за последние `days` дней, включая сегодняшний день.
- * Дни без запусков возвращаются нулями — иначе на графике были бы дырки.
+ * Runs by day for the last `days` days, including today.
+ * Days with no runs come back as zeros: otherwise the chart would have gaps.
  */
 export async function getDailyRuns(days = 14): Promise<DailyRuns[]> {
   const result = await db.execute<{
@@ -129,7 +129,7 @@ export type JobSummary = {
   lastRunAt: Date | null
 }
 
-/** Разрез статистики по задачам за последние 7 суток. */
+/** Stats breakdown by job for the last 7 days. */
 export async function getJobSummaries(): Promise<JobSummary[]> {
   const result = await db.execute<{
     job_name: string
@@ -163,7 +163,7 @@ export async function getRecentRuns(limit = 12): Promise<JobRun[]> {
   return db.select().from(jobRuns).orderBy(desc(jobRuns.startedAt)).limit(limit)
 }
 
-/** avg() в Postgres возвращает numeric, а node-postgres отдаёт его строкой. */
+/** avg() in Postgres returns numeric, and node-postgres hands it back as a string. */
 function toNumber(value: string | number | null | undefined): number | null {
   if (value === null || value === undefined) return null
   const parsed = typeof value === 'number' ? value : Number(value)

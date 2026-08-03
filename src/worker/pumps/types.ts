@@ -1,21 +1,21 @@
 import type { DouClient } from '../../lib/dou/client'
 
 export type PumpContext = {
-  /** Пишет строку в лог воркера с префиксом задачи. */
+  /** Writes a line to the worker log, prefixed with the job name. */
   log: (message: string) => void
   attempt: number
   client: DouClient
 }
 
 export type PumpResult = {
-  /** Сколько единиц работы обработано — попадает в job_runs.items_processed. */
+  /** How many units of work were processed, goes into job_runs.items_processed. */
   itemsProcessed?: number
-  /** Детали прогона: job_runs хранит одну строку на прогон, а не на элемент. */
+  /** Run details: job_runs stores one row per run, not per item. */
   meta?: Record<string, unknown>
   /**
-   * Просьба поставить очередь на паузу: источник ответил 403.
-   * Обрабатывается в воркере через Worker.RateLimitError, чтобы задание
-   * вернулось в ожидание, не сжигая попытку.
+   * A request to pause the queue: the source responded with 403.
+   * Handled in the worker via Worker.RateLimitError, so the job goes
+   * back to waiting without burning an attempt.
    */
   cooldownMs?: number
 }

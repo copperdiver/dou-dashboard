@@ -1,44 +1,46 @@
 name: dou-dashboard
 
-# Продакшен: образы берутся из GHCR, ничего не собирается на месте.
+# Production: images come from GHCR, nothing is built locally.
 #
 #   docker compose -f docker-compose.prod.yml pull
 #   docker compose -f docker-compose.prod.yml up -d
 #
-# На сервер нужно скопировать только этот файл и .env — код приезжает
-# внутри образов.
+# Only this file and .env need to be copied to the server. The code
+# ships inside the images.
 #
-# Ingress — Traefik во внешней сети `proxy`: он терминирует TLS и сам
-# получает сертификат. Поэтому наружу не публикуется ни один порт, даже
-# у web: до него Traefik достаёт по внутренней сети, а `expose` лишь
-# объявляет порт для этой сети.
+# Ingress is Traefik on the external `proxy` network: it terminates TLS
+# and gets its own certificate. So no port is published here, not even
+# for web: Traefik reaches it over the internal network, and `expose`
+# just declares the port on that network.
 
 x-app-env: &app-env
   NODE_ENV: production
   TZ: ${TZ:-Europe/Moscow}
-  DATABASE_URL: postgres://${POSTGRES_USER:-dou}:${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD в .env}@dou-postgres:5432/${POSTGRES_DB:-dou_dashboard}
+  DATABASE_URL: postgres://${POSTGRES_USER:-dou}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}@dou-postgres:5432/${POSTGRES_DB:-dou_dashboard}
   REDIS_URL: redis://dou-redis:6379
 
-# Настройки источника нужны обоим сервисам, а не только воркеру: страница
-# состояния делает разовую проверку связи по кнопке, и делает её тем же
-# клиентом. Расходись настройки — проверка отвечала бы не за то, что
-# происходит в конвейере: с UA по умолчанию источник даёт 403, а 403
-# записывает в Redis паузу, общую с воркером. Диагностика остановила бы
-# то, ради чего её открыли.
+# Source settings are needed by both services, not just the worker: the
+# status page runs a one-off connectivity check on button click, using
+# the same client. If the settings drifted, that check would stop
+# testing what actually happens in the pipeline: the default UA gets a
+# 403 from the source, and a 403 writes a pause to Redis shared with the
+# worker. Diagnostics would end up blocking the thing they were opened
+# to diagnose.
 x-dou-env: &dou-env
-  # С UA по умолчанию источник отвечает 403 — браузерный обязателен.
-  DOU_USER_AGENT: ${DOU_USER_AGENT:?нужен DOU_USER_AGENT в .env}
-  # Прокси нужен там, где адрес сервера закрыт источником. Пусто — запросы
-  # идут напрямую. Действует только на in.gov.br: трафик к LLM в прокси
-  # не заворачивается, иначе резидентный тариф считал бы и ответы моделей.
+  # The default UA gets a 403 from the source, so a browser UA is required.
+  DOU_USER_AGENT: ${DOU_USER_AGENT:?DOU_USER_AGENT is required in .env}
+  # Proxy is only needed where the server's address is blocked by the
+  # source. Empty means requests go direct. Only applies to in.gov.br:
+  # LLM traffic isn't routed through it, or a residential-proxy plan
+  # would end up billing for the model's responses too.
   DOU_PROXY_URL: ${DOU_PROXY_URL:-}
   DOU_MIN_INTERVAL_MS: ${DOU_MIN_INTERVAL_MS:-2000}
   DOU_MAX_REQUESTS_PER_DAY: ${DOU_MAX_REQUESTS_PER_DAY:-5000}
   DOU_SECTIONS: ${DOU_SECTIONS:-do1}
 
-# Образ и тег заданы переменными IMAGE_PREFIX и IMAGE_TAG: откат на
-# предыдущую версию — это правка .env и `up -d`, без редактирования
-# этого файла.
+# Image and tag are set via IMAGE_PREFIX and IMAGE_TAG: rolling back to
+# a previous version is an .env edit and `up -d`, no changes to this
+# file needed.
 
 services:
   dou-postgres:
@@ -47,10 +49,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-dou}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?нужен POSTGRES_PASSWORD в .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
       POSTGRES_DB: ${POSTGRES_DB:-dou_dashboard}
       TZ: ${TZ:-Europe/Moscow}
-      # Часовой пояс сессий: от него зависит группировка статистики по суткам.
+      # Session timezone: daily stats grouping depends on it.
       PGTZ: ${TZ:-Europe/Moscow}
     volumes:
       - dou_pgdata:/var/lib/postgresql
@@ -75,12 +77,13 @@ services:
       timeout: 5s
       retries: 12
 
-  # Одноразовый сервис: применяет миграции, заливает справочники и завершается.
-  # web и worker ждут его успешного выхода — так на старте нет гонки за схему.
-  # Справочники стран и штатов не демо-данные: без них не работает
-  # сопоставление country_raw/state_raw, поэтому они часть развёртывания.
+  # One-shot service: applies migrations, seeds reference data, exits.
+  # web and worker wait for it to exit successfully, so there's no race
+  # against the schema on startup. Country/state reference data isn't
+  # demo data: country_raw/state_raw matching doesn't work without it,
+  # so it's part of the deployment, not a separate step.
   dou-migrate:
-    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-worker:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/your-org/dou-dashboard}-worker:${IMAGE_TAG:-latest}
     container_name: dou-migrate
     command:
       - sh
@@ -93,17 +96,17 @@ services:
         condition: service_healthy
 
   dou-web:
-    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-web:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/your-org/dou-dashboard}-web:${IMAGE_TAG:-latest}
     container_name: dou-web
     restart: unless-stopped
     environment:
       <<: [*app-env, *dou-env]
-      # Канонические ссылки и hreflang. Без префикса NEXT_PUBLIC_ намеренно:
-      # такие переменные Next подставляет на сборке, и задать их здесь
-      # было бы нельзя.
-      SITE_URL: https://${PUBLIC_HOST:-dou.copperdiver.studio}
-      # Аналитика. Пусто — счётчик не подключается: незаполненная
-      # переменная не должна тихо слать данные из чужого окружения.
+      # Canonical links and hreflang. No NEXT_PUBLIC_ prefix on purpose:
+      # Next inlines those at build time, so they couldn't be set here.
+      SITE_URL: https://${PUBLIC_HOST:-example.com}
+      # Analytics. Empty means the tracker isn't loaded: an unset
+      # variable shouldn't silently ship data from someone else's
+      # environment.
       CLARITY_ID: ${CLARITY_ID:-}
     depends_on:
       dou-postgres:
@@ -121,7 +124,7 @@ services:
       - 'traefik.http.routers.dou-web.entrypoints=websecure'
       - 'traefik.http.routers.dou-web.tls=true'
       - 'traefik.http.routers.dou-web.tls.certresolver=le'
-      - 'traefik.http.routers.dou-web.rule=Host(`${PUBLIC_HOST:-dou.copperdiver.studio}`)'
+      - 'traefik.http.routers.dou-web.rule=Host(`${PUBLIC_HOST:-example.com}`)'
       - 'traefik.http.services.dou-web.loadbalancer.server.port=3000'
     healthcheck:
       test:
@@ -135,11 +138,11 @@ services:
       start_period: 20s
 
   dou-worker:
-    image: ${IMAGE_PREFIX:-ghcr.io/copperdiver/dou-dashboard}-worker:${IMAGE_TAG:-latest}
+    image: ${IMAGE_PREFIX:-ghcr.io/your-org/dou-dashboard}-worker:${IMAGE_TAG:-latest}
     container_name: dou-worker
     restart: unless-stopped
-    # В сеть proxy не входит: наружу воркер ничего не отдаёт, только сам
-    # ходит в in.gov.br и к провайдеру LLM.
+    # Not on the proxy network: the worker doesn't serve anything, it
+    # only calls out to in.gov.br and the LLM provider.
     environment:
       <<: [*app-env, *dou-env]
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
@@ -151,7 +154,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       LLM_MODEL_CLAUDE: ${LLM_MODEL_CLAUDE:-}
       LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-}
-      # Ключи берутся из .env и внутрь образа не попадают.
+      # Keys come from .env and never end up baked into the image.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
@@ -163,7 +166,8 @@ services:
         condition: service_completed_successfully
 
 networks:
-  # Сеть Traefik. Создаётся не здесь: она общая для всех проектов сервера.
+  # Traefik's network. Not created here: it's shared across every
+  # project on the server.
   proxy:
     external: true
 

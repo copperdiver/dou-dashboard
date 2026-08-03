@@ -1,11 +1,11 @@
 import Link from 'next/link'
 
 /**
- * Переход к следующей странице фида.
+ * Link to the next page of a feed.
  *
- * Курсорная пагинация: ссылка несёт границу последней показанной записи,
- * а не номер страницы. Назад возвращает браузер — хранить обратные
- * курсоры ради своей кнопки «назад» не стоит.
+ * Cursor-based pagination: the link carries the boundary of the last
+ * record shown, not a page number. Going back is handled by the browser:
+ * storing reverse cursors just for a custom "back" button isn't worth it.
  */
 export function Pager({
   basePath,
@@ -14,7 +14,7 @@ export function Pager({
   label,
 }: {
   basePath: string
-  /** Текущие параметры: фильтры при листании не должны теряться. */
+  /** Current params: filters must not be lost when paging. */
   params: Record<string, string | undefined>
   next: string | null
   label: string

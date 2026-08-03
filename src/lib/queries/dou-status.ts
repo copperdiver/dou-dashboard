@@ -6,20 +6,21 @@ import { isProxyConfigured } from '../dou/client'
 import { douConfig } from '../env'
 
 /**
- * Состояние связи с in.gov.br.
+ * State of the connection to in.gov.br.
  *
- * Собирается из того, что конвейер уже знает: пауза после 403 и суточный
- * расход запросов лежат в Redis, история попыток — в `ingest_days`
- * и `job_runs`. Своего запроса к источнику здесь нет намеренно.
+ * Assembled from what the pipeline already knows: the cooldown after a
+ * 403 and the daily request spend live in Redis, the history of
+ * attempts lives in `ingest_days` and `job_runs`. There's deliberately
+ * no request to the source here.
  *
- * Пинговать DOU при каждом показе страницы нельзя по трём причинам:
- * запрос попал бы в суточный бюджет, участил бы обращения сверх
- * `DOU_MIN_INTERVAL_MS` и мог бы разбудить тот самый WAF, ради которого
- * написаны паузы и серии отказов. К тому же настоящий трафик насосов
- * говорит о доступности больше, чем синтетическая проверка: он ходит
- * по реальным адресам и с реальной частотой.
+ * Pinging DOU on every page view is off the table for three reasons: it
+ * would count against the daily budget, it would push request
+ * frequency past `DOU_MIN_INTERVAL_MS`, and it could wake up the very
+ * WAF that the cooldowns and refusal streaks exist to appease. On top
+ * of that, real pump traffic says more about availability than a
+ * synthetic check would: it hits real URLs at a real cadence.
  *
- * Разовая проверка по требованию живёт отдельно — см. `probeDou`.
+ * The on-demand one-off check lives separately. See `probeDou`.
  */
 
 const COOLDOWN_KEY = 'dou:cooldown:until'
@@ -30,54 +31,56 @@ const PROBE_KEY = 'dou:probe:last'
 export type DouProbe = {
   at: string
   ok: boolean
-  /** HTTP-код либо null, если до ответа дело не дошло. */
+  /** HTTP status code, or null if the response never came back. */
   status: number | null
   message: string
   durationMs: number
 }
 
 export type DouStatus = {
-  /** Мс до конца паузы после 403. 0 — паузы нет. */
+  /** Ms until the end of the post-403 cooldown. 0 means no cooldown. */
   cooldownMs: number
-  /** Сколько 403 подряд получено. */
+  /** How many 403s in a row have been received. */
   forbiddenStreak: number
   budget: { used: number; limit: number }
-  /** Последний УСПЕШНЫЙ разбор дневного индекса. */
+  /** Last SUCCESSFUL parse of a daily index. */
   lastSuccessAt: string | null
-  /** Последняя неудача с причиной, как её записал клиент. */
+  /** Last failure with the reason, as recorded by the client. */
   lastFailure: { day: string; error: string; attempts: number } | null
-  /** Дни, окончательно упавшие и ждущие ручного сброса. */
+  /** Days that finally failed and are waiting for a manual reset. */
   failedDays: number
-  /** Страницы, ожидающие загрузки. */
+  /** Pages waiting to be fetched. */
   pendingPages: number
-  /** Последняя проверка по кнопке. */
+  /** Last check triggered by the button. */
   probe: DouProbe | null
   redisAvailable: boolean
-  /** Идёт ли трафик к источнику через прокси. */
+  /** Whether traffic to the source is going through a proxy. */
   viaProxy: boolean
 }
 
 /**
- * Своё соединение с Redis, а не общее с очередями: те живут в воркере,
- * а это читает веб. Соединение ленивое и переиспользуется между
- * запросами — открывать его на каждый показ страницы дорого.
+ * Its own Redis connection rather than sharing one with the queues:
+ * those live in the worker, while this is read by the web app. The
+ * connection is lazy and reused across requests: opening it on every
+ * page view would be expensive.
  */
 let redis: IORedis | null = null
 
 /**
- * Возвращает ПОДКЛЮЧЁННОЕ соединение либо null.
+ * Returns a CONNECTED connection or null.
  *
- * Подключение — часть получения, а не забота вызывающего: соединение
- * ленивое и с выключенной офлайн-очередью, поэтому команда на неподнятом
- * сокете падает сразу. Один раз на этом уже споткнулись.
+ * Connecting is part of getting the connection, not the caller's
+ * concern: the connection is lazy and has the offline queue disabled,
+ * so a command on a socket that isn't up yet fails immediately. We've
+ * been bitten by this once already.
  */
 export async function getRedis(): Promise<IORedis | null> {
   if (!process.env.REDIS_URL) return null
   if (!redis) {
     redis = new IORedis(process.env.REDIS_URL, {
       maxRetriesPerRequest: 1,
-      // Страница состояния не должна ждать недоступный Redis: без него
-      // она просто покажет остальные показатели.
+      // The status page shouldn't wait on an unavailable Redis: without
+      // it, it just shows the remaining metrics.
       connectTimeout: 2000,
       lazyConnect: true,
       enableOfflineQueue: false,
@@ -171,25 +174,25 @@ async function readRedis(today: string): Promise<{
       redisAvailable: true,
     }
   } catch {
-    // Redis недоступен — это само по себе показатель, но остальные
-    // сведения из базы всё равно нужно отдать.
+    // Redis being unavailable is itself a signal, but the rest of the
+    // data from the database still needs to be returned.
     return empty
   }
 }
 
-/** Сохраняет результат разовой проверки, чтобы страница его показала. */
+/** Saves the result of a one-off check so the page can show it. */
 export async function saveProbe(probe: DouProbe): Promise<void> {
   const client = await getRedis()
   if (!client) return
   try {
-    // Час жизни: более старая проверка ничего не говорит о «сейчас».
+    // One-hour TTL: an older check says nothing about "now".
     await client.set(PROBE_KEY, JSON.stringify(probe), 'EX', 3600)
   } catch {
-    // Не смогли записать — проверка всё равно уже выполнена и показана.
+    // Failed to write: the check has already been run and shown regardless.
   }
 }
 
-/** Когда последний раз успешно ходили за страницей статьи. */
+/** When we last successfully fetched an article page. */
 export async function getLastFetchRun(): Promise<string | null> {
   const { rows } = await db.execute<{ at: string | null }>(sql`
     select to_char(max(started_at), 'YYYY-MM-DD"T"HH24:MI:SSOF') as at

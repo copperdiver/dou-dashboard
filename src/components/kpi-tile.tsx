@@ -4,12 +4,13 @@ import { formatPercent } from '@/lib/format'
 import { Sparkline } from '@/components/charts/sparkline'
 
 /*
- * Плитка KPI.
+ * KPI tile.
  *
- * Заливка плитки — оформление, а не данные: тинт закреплён за плиткой по
- * смыслу и не меняется от значений, иначе цвет начал бы врать о величине.
- * Число набрано пропорциональными цифрами: tabular-nums на этом кегле
- * выглядит разреженным, а выравнивать по колонке здесь нечего.
+ * The tile's fill is decoration, not data: the tint is tied to the tile by
+ * meaning and doesn't change with the values, otherwise the color would
+ * start lying about the magnitude. The number is set in proportional
+ * figures: tabular-nums looks too spread out at this size, and there's
+ * nothing here to align into a column anyway.
  */
 
 export type KpiIcon = 'check' | 'cross' | 'percent' | 'stack'
@@ -41,9 +42,9 @@ export function KpiTile({
   label: string
   value: string
   icon: KpiIcon
-  /** Тинт заливки 1..4. */
+  /** Fill tint 1..4. */
   tint: number
-  /** Слот палитры серий для иконки и спарклайна. */
+  /** Series palette slot for the icon and sparkline. */
   slot: number
   change?: number | null
   betterWhenUp?: boolean
@@ -51,9 +52,9 @@ export function KpiTile({
   unchangedLabel: string
   hint?: string
   /**
-   * Из чего складывается значение — по одной части на слагаемое.
-   * Списком, а не готовой строкой: на узкой плитке строка переносится,
-   * и подпись обязана оставаться на одной строке со своим числом.
+   * What the value is made of: one part per addend.
+   * A list, not a pre-built string: on a narrow tile the line wraps, and
+   * a label must stay on the same line as its number.
    */
   note?: string[]
   spark?: (number | null)[]
@@ -143,8 +144,7 @@ function Delta({
   return (
     <span className="inline-flex flex-wrap items-baseline gap-x-1">
       <span className={color}>
-        {/* Стрелка продублирована текстом: направление не должно
-            держаться на одном цвете. */}
+        {/* The arrow is backed by text: direction shouldn't rely on color alone. */}
         <span aria-hidden="true">{flat ? '→' : up ? '↑' : '↓'}</span>{' '}
         {flat ? unchangedLabel : formatPercent(locale, Math.abs(change), 0)}
       </span>

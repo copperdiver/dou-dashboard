@@ -17,7 +17,7 @@ import { getDouStatus } from '@/lib/queries/dou-status'
 import { getDailyRuns, getJobSummaries, getKpis, getRecentRuns } from '@/lib/stats'
 import { SCHEDULE } from '@/worker/jobs'
 
-// Дашборд всегда показывает свежие данные — прегенерация не нужна.
+// The dashboard always shows fresh data, no need for pre-generation.
 export const dynamic = 'force-dynamic'
 
 const REFRESH_MS = 30_000
@@ -41,7 +41,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
 
   return (
     <>
-      {/* Шапку и навигацию рисует layout — здесь только содержимое раздела. */}
+      {/* The layout renders the header and nav; this is just the section content. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-xs text-ink-secondary">
           {kpis.running > 0
@@ -58,8 +58,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ loca
         />
       </div>
 
-      {/* Связь с источником идёт первой: когда её нет, остальные
-          показатели объясняются именно этим. */}
+      {/* Source connectivity comes first: when it's down, the rest of the
+          metrics are explained by that alone. */}
       <div className="mt-4">
         <DouStatusPanel locale={locale} status={source} labels={d.source} />
       </div>

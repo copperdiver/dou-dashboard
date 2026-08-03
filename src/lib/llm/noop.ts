@@ -1,15 +1,16 @@
 import type { EnrichInput, EnrichResult, ReasonEnricher } from './types'
 
 /**
- * Заглушка без обращения к LLM.
+ * No-op stub that doesn't call an LLM.
  *
- * Используется, когда ключа нет или провайдер выключен намеренно.
- * Сохраняет португальский оригинал и относит причину к «Неясно», НЕ
- * придумывая переводов: подделанный перевод хуже отсутствующего, потому
- * что в UI он выглядит так же авторитетно, как настоящий.
+ * Used when there's no key or the provider is intentionally disabled.
+ * Keeps the Portuguese original and files the reason under "Unclear",
+ * NOT making up a translation: a fabricated translation is worse than a
+ * missing one, because in the UI it looks just as authoritative as a
+ * real one.
  *
- * Помечает результат needsReview, чтобы такие причины были видны на
- * экране health и их можно было дозаполнить позже.
+ * Flags the result as needsReview so such reasons are visible on the
+ * health screen and can be filled in later.
  */
 export class NoopEnricher implements ReasonEnricher {
   readonly name = 'noop'
@@ -34,14 +35,14 @@ export class NoopEnricher implements ReasonEnricher {
       newReasons: [
         {
           textPt,
-          // Переводов нет — UI покажет португальский оригинал.
+          // No translations: the UI will show the Portuguese original.
           textEn: '',
           textRu: '',
           categoryCode: 'unclear',
         },
       ],
       needsReview: true,
-      reviewReason: 'провайдер LLM выключен: перевод и категория не заполнены',
+      reviewReason: 'LLM provider disabled: translation and category not filled in',
       model: this.model,
       promptVersion: this.promptVersion,
     }

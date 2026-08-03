@@ -1,33 +1,33 @@
 import Script from 'next/script'
 
 /**
- * Microsoft Clarity — аналитика поведения.
+ * Microsoft Clarity: behavior analytics.
  *
- * Идентификатор приходит переменной окружения `CLARITY_ID`, и без неё
- * компонент не выводит ничего: в разработке и на локальных прогонах
- * счётчику делать нечего, а забытая переменная не должна тихо слать
- * данные из чужого окружения в тот же проект Clarity.
+ * The id comes from the `CLARITY_ID` environment variable, and without it
+ * the component renders nothing: in development and local runs the counter
+ * has nothing to do, and a forgotten variable shouldn't silently ship data
+ * from the wrong environment into the same Clarity project.
  *
- * Имя переменной без префикса NEXT_PUBLIC_ намеренно. Такие переменные
- * Next подставляет на этапе сборки, то есть один и тот же образ нельзя
- * было бы выложить с разными идентификаторами. Здесь значение читает
- * серверный компонент и подставляет в разметку на запросе.
+ * The variable name deliberately has no NEXT_PUBLIC_ prefix. Such variables
+ * get inlined by Next at build time, meaning the same image couldn't be
+ * deployed with different ids. Here the value is read by a server
+ * component and injected into the markup per request.
  *
- * `afterInteractive` — загрузка после гидратации: счётчик не должен
- * задерживать первую отрисовку.
+ * `afterInteractive`: load after hydration so the counter doesn't delay
+ * the first paint.
  *
- * Идентификатор тега — `ms-clarity`, и «clarity» здесь использовать
- * нельзя. Браузер выставляет элементы с `id` свойствами `window`, так что
- * `<script id="clarity">` делает `window.clarity` этим самым элементом.
- * Тогда `c[a]=c[a]||function(){…}` видит занятое место и очередь не
- * создаёт, а загрузившийся тег вызывает `window.clarity(...)` — элемент,
- * не функцию — и падает. Счётчик при этом молчит: скрипт грузится,
- * ошибок в разметке нет, а сессии не отправляются ни одной.
+ * The tag's id is `ms-clarity`, and `clarity` cannot be used here. The
+ * browser exposes elements with an `id` as properties of `window`, so
+ * `<script id="clarity">` would make `window.clarity` be that very element.
+ * Then `c[a]=c[a]||function(){…}` sees the slot already taken and doesn't
+ * create a queue, and once the tag loads it calls `window.clarity(...)`
+ * (which is the element, not a function) and throws. The counter goes
+ * silent in the process: the script loads, there are no markup errors, and
+ * not a single session gets sent.
  */
 export function Clarity({ id }: { id: string | undefined }) {
-  // Идентификатор попадает внутрь строки скрипта, поэтому допускаются
-  // только буквы и цифры: посторонние символы там превратились бы
-  // в исполняемый код.
+  // The id gets embedded inside the script string, so only letters and
+  // digits are allowed: anything else there would turn into executable code.
   if (!id || !/^[a-z0-9]+$/i.test(id)) return null
 
   return (

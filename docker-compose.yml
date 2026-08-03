@@ -1,6 +1,6 @@
 name: dou-dashboard
 
-# Полный стек: Postgres, Redis, миграции, Next.js и воркер фоновых задач.
+# Full stack: Postgres, Redis, migrations, Next.js, and the background worker.
 #   docker compose up -d --build
 
 x-app-env: &app-env
@@ -18,7 +18,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dou}
       POSTGRES_DB: ${POSTGRES_DB:-dou_dashboard}
       TZ: ${TZ:-Europe/Moscow}
-      # Часовой пояс сессий: от него зависит группировка статистики по суткам.
+      # Session time zone: daily stats grouping depends on it.
       PGTZ: ${TZ:-Europe/Moscow}
     ports:
       - '${POSTGRES_PORT:-5432}:5432'
@@ -46,10 +46,11 @@ services:
       timeout: 5s
       retries: 12
 
-  # Одноразовый сервис: применяет миграции, заливает справочники и завершается.
-  # web и worker ждут его успешного выхода — так на старте нет гонки за схему.
-  # Справочники стран и штатов не демо-данные: без них не работает
-  # сопоставление country_raw/state_raw, поэтому они часть развёртывания.
+  # One-shot service: applies migrations, loads reference data, and exits.
+  # web and worker wait for it to exit successfully, so there's no schema
+  # race on startup. The country/state reference tables aren't demo data:
+  # without them country_raw/state_raw matching doesn't work, so they're
+  # part of the deployment.
   migrate:
     build:
       context: .
@@ -108,7 +109,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-auto}
       LLM_MODEL_CLAUDE: ${LLM_MODEL_CLAUDE:-}
       LLM_MODEL_OPENAI: ${LLM_MODEL_OPENAI:-}
-      # Ключи берутся из .env и внутрь образа не попадают.
+      # Keys are read from .env and never baked into the image.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:

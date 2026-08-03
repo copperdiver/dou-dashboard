@@ -3,22 +3,23 @@ import { fetch as undiciFetch, ProxyAgent, type Dispatcher } from 'undici'
 import { douConfig } from '../env'
 
 /**
- * HTTP-клиент к in.gov.br.
+ * HTTP client for in.gov.br.
  *
- * Сбои различаются по типу, а не сваливаются в один ретрай: 403 — это WAF,
- * и повторять его сразу бессмысленно и вредно, тогда как 5xx транзиентен,
- * а 404 означает снятую публикацию и повторять её не нужно никогда.
+ * Failures are distinguished by type instead of falling into one retry
+ * bucket: 403 is the WAF, and retrying it immediately is pointless and
+ * harmful, while 5xx is transient, and 404 means the publication was
+ * pulled and should never be retried.
  */
 
 export type DouResponse =
   | { kind: 'ok'; status: number; body: string }
-  /** Публикация снята — больше не пытаться. */
+  /** Publication was pulled. Stop trying. */
   | { kind: 'gone'; status: number }
-  /** WAF. Требует паузы всей очереди, а не повторной попытки. */
+  /** WAF. Requires pausing the whole queue, not a retry. */
   | { kind: 'forbidden'; status: number; cooldownMs: number }
-  /** Транзиентный сбой: имеет смысл повторить с экспонентой. */
+  /** Transient failure: worth retrying with backoff. */
   | { kind: 'transient'; status: number | null; message: string }
-  /** Исчерпан суточный бюджет запросов — страховка от бесконечного цикла. */
+  /** Daily request budget exhausted (a safeguard against an infinite loop). */
   | { kind: 'budget_exhausted'; used: number; limit: number }
 
 const COOLDOWN_KEY = 'dou:cooldown:until'
@@ -26,15 +27,16 @@ const STREAK_KEY = 'dou:forbidden:streak'
 const BUDGET_PREFIX = 'dou:budget:'
 
 /*
- * Прокси только для запросов к in.gov.br.
+ * Proxy only for requests to in.gov.br.
  *
- * Через переменные окружения (NODE_USE_ENV_PROXY) было бы короче, но это
- * увело бы в прокси ВЕСЬ исходящий трафик процесса, включая обращения
- * к LLM. Прокси резидентный и считается по гигабайтам, а ответы моделей
- * заметно крупнее страниц выпуска — счёт рос бы на ровном месте.
+ * Using environment variables (NODE_USE_ENV_PROXY) would be shorter, but
+ * it would route ALL outgoing process traffic through the proxy, including
+ * calls to the LLM. The proxy is residential and billed by the gigabyte,
+ * and model responses are noticeably larger than edition pages, so the bill
+ * would grow for no reason.
  *
- * Агент создаётся один раз: у него внутри пул соединений, и пересоздание
- * на каждый запрос сводило бы пул на нет.
+ * The agent is created once: it holds a connection pool internally, and
+ * recreating it on every request would defeat the pool entirely.
  */
 let proxyAgent: ProxyAgent | null | undefined
 
@@ -46,18 +48,18 @@ function getProxyDispatcher(): Dispatcher | undefined {
   return proxyAgent ?? undefined
 }
 
-/** Идёт ли трафик к источнику через прокси. Показывается на странице состояния. */
+/** Whether traffic to the source goes through the proxy. Shown on the status page. */
 export function isProxyConfigured(): boolean {
   return Boolean(process.env.DOU_PROXY_URL)
 }
 
 /*
- * Запросы идут через `fetch` ИЗ ПАКЕТА undici, а не через глобальный.
+ * Requests go through `fetch` FROM THE undici PACKAGE, not the global one.
  *
- * Глобальный `fetch` в Node работает на встроенной копии undici и чужой
- * `ProxyAgent` не принимает: запрос падает с `UND_ERR_INVALID_ARG` вместо
- * похода на прокси. Проверено — с пакетным `fetch` тот же агент даёт
- * честный `ECONNREFUSED` на закрытом порту.
+ * Node's global `fetch` runs on its own bundled copy of undici and won't
+ * accept a foreign `ProxyAgent`: the request fails with `UND_ERR_INVALID_ARG`
+ * instead of going through the proxy. Verified: with the package's
+ * `fetch`, the same agent gives an honest `ECONNREFUSED` on a closed port.
  */
 
 export class DouClient {
@@ -65,7 +67,7 @@ export class DouClient {
 
   constructor(private readonly redis: Redis) {}
 
-  /** Мс до конца паузы, наложенной предыдущими 403. 0 — паузы нет. */
+  /** Ms until the cooldown from previous 403s ends. 0 means no cooldown. */
   async cooldownRemainingMs(): Promise<number> {
     const raw = await this.redis.get(COOLDOWN_KEY)
     if (!raw) return 0
@@ -135,9 +137,9 @@ export class DouClient {
   }
 
   /**
-   * Счётчик по календарным суткам UTC. Дата берётся из системного времени
-   * и относится к нашим запросам, а не к дате выпуска DOU, — путать их
-   * нельзя, но здесь смещение часового пояса безобидно.
+   * Counter keyed by calendar UTC day. The date comes from system time and
+   * refers to our own requests, not the DOU edition date. The two must
+   * not be confused, but the timezone offset here is harmless.
    */
   private async consumeBudget(limit: number): Promise<{ ok: boolean; used: number }> {
     const key = `${BUDGET_PREFIX}${new Date().toISOString().slice(0, 10)}`
@@ -147,8 +149,8 @@ export class DouClient {
   }
 
   /**
-   * Наращивает серию 403 и возвращает длительность паузы: короткая при
-   * первых отказах, длинная — когда WAF явно закрыл доступ.
+   * Increments the 403 streak and returns the cooldown duration: short for
+   * the first refusals, long once the WAF has clearly locked us out.
    */
   private async registerForbidden(cfg: ReturnType<typeof douConfig>): Promise<number> {
     const streak = await this.redis.incr(STREAK_KEY)
@@ -165,35 +167,37 @@ export class DouClient {
 }
 
 /**
- * Разворачивает ошибку сети в читаемую строку.
+ * Unwraps a network error into a readable string.
  *
- * Node на любом сбое соединения бросает `TypeError: fetch failed`, а
- * настоящую причину кладёт в `cause`: ENOTFOUND, ECONNREFUSED, ETIMEDOUT,
- * ошибка сертификата. Без неё в журнале и в `ingest_days.last_error`
- * оставалось «fetch failed», по которому нельзя отличить упавший DNS
- * от закрытого файрвола.
+ * Node throws `TypeError: fetch failed` on any connection failure and
+ * puts the real reason in `cause`: ENOTFOUND, ECONNREFUSED, ETIMEDOUT, a
+ * certificate error. Without it, the log and `ingest_days.last_error`
+ * were left with just "fetch failed", which can't tell a broken DNS from
+ * a closed firewall.
  *
- * Обрыв по таймауту распознаётся отдельно: AbortController отменяет
- * запрос сам, и без пояснения это выглядит как загадочная отмена.
+ * A timeout abort is recognized separately: AbortController cancels the
+ * request itself, and without an explanation this looks like a mysterious
+ * cancellation.
  *
- * Цепочка причин разворачивается целиком, а не на один уровень.
- * Отказ прокси в туннеле undici заворачивает дважды, и на первом уровне
- * видно лишь «Request was cancelled» — по такому сообщению не отличить
- * прокси, закрывший домен, от оборванного соединения. Настоящая причина
- * («Proxy response (403) !== 200 when HTTP Tunneling») лежит глубже.
+ * The cause chain is unwrapped in full, not just one level. A proxy
+ * refusal inside the undici tunnel gets wrapped twice, and the first
+ * level only shows "Request was cancelled", a message that can't
+ * distinguish a proxy that closed the domain from a dropped connection.
+ * The real reason ("Proxy response (403) !== 200 when HTTP Tunneling")
+ * sits deeper.
  */
 export function describeFetchError(error: unknown): string {
   if (!(error instanceof Error)) return String(error)
 
   if (error.name === 'AbortError' || error.name === 'TimeoutError') {
-    return 'таймаут запроса'
+    return 'request timeout'
   }
 
   type Cause = { code?: string; message?: string; cause?: unknown } | undefined
 
   const details: string[] = []
   let cause = error.cause as Cause
-  // Ограничение глубины — страховка от закольцованной причины.
+  // Depth limit (a safeguard against a circular cause chain).
   for (let depth = 0; cause && depth < 5; depth += 1) {
     const detail = cause.code ?? cause.message
     if (detail && !details.includes(detail)) details.push(detail)
@@ -203,13 +207,13 @@ export function describeFetchError(error: unknown): string {
   return details.length ? `${error.message}: ${details.join(' ← ')}` : error.message
 }
 
-/** URL дневного индекса выпуска. */
+/** URL of the daily edition index. */
 export function dailyIndexUrl(editionDate: string, section: string): string {
   const [year, month, day] = editionDate.split('-')
   return `${douConfig().baseUrl}/leiturajornal?data=${day}-${month}-${year}&secao=${section}`
 }
 
-/** URL страницы статьи. */
+/** URL of the article page. */
 export function articleUrl(urlTitle: string): string {
   return `${douConfig().baseUrl}/web/dou/-/${urlTitle}`
 }

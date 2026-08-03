@@ -5,13 +5,13 @@ import type { Dictionary } from '@/i18n'
 import { SEGMENT_GROUP, segmentClass } from '@/components/segmented'
 import { THEME_COOKIE, writeUiCookie, type Theme } from '@/lib/ui-state'
 
-/** Порядок сегментов: сначала значение по умолчанию. */
+/** Segment order: the default value comes first. */
 const THEMES: Theme[] = ['system', 'light', 'dark']
 
 /*
- * Иконки: монитор — «как в системе», солнце — светлая, месяц — тёмная.
- * Название режима остаётся в подсказке и в скрытой подписи, потому что
- * иконка сама по себе однозначного значения не несёт.
+ * Icons: monitor is "match system", sun is light, moon is dark.
+ * The mode's name stays in the tooltip and the hidden label, because
+ * the icon alone doesn't carry an unambiguous meaning.
  */
 const ICONS: Record<Theme, React.ReactNode> = {
   system: <path d="M3 5h18v11H3zM8 20h8M12 16v4" />,
@@ -25,10 +25,10 @@ const ICONS: Record<Theme, React.ReactNode> = {
 }
 
 /*
- * Источник истины — атрибут на <html>, который проставил сервер по cookie.
- * Читаем его через useSyncExternalStore, а не держим копию в состоянии:
- * при клиентской навигации компонент перемонтируется, и копия разошлась бы
- * с разметкой.
+ * The source of truth is the attribute on <html>, set by the server from a
+ * cookie. We read it via useSyncExternalStore rather than keep a copy in
+ * state: on client-side navigation the component remounts, and the copy
+ * would drift out of sync with the markup.
  */
 const listeners = new Set<() => void>()
 
@@ -49,8 +49,8 @@ function getServerSnapshot(): Theme {
 }
 
 function setTheme(next: Theme): void {
-  // Атрибут правим сразу — отклик по нажатию должен быть мгновенным,
-  // а cookie подхватит следующий серверный рендер.
+  // The attribute is updated right away: the click's feedback must be
+  // instant, and the cookie will be picked up by the next server render.
   if (next === 'system') {
     delete document.documentElement.dataset.theme
     writeUiCookie(THEME_COOKIE, null)
@@ -80,8 +80,8 @@ export function ThemeToggle({
             key={value}
             type="button"
             onClick={() => setTheme(value)}
-            // aria-pressed, а не только заливка: выбранный режим должен
-            // читаться вспомогательными технологиями, а не одним цветом.
+            // aria-pressed, not just the fill: the selected mode must be
+            // readable by assistive technology, not by color alone.
             aria-pressed={active}
             title={labels[value]}
             className={segmentClass(active)}

@@ -1,12 +1,13 @@
 /**
- * Разбор дневного индекса выпуска DOU.
+ * Parsing the daily index of a DOU edition.
  *
- * Страница `leiturajornal?data=DD-MM-YYYY&secao=do1` отдаёт HTML, внутри
- * которого лежит `<script id="params" type="application/json">` со списком
- * всех статей дня (~300). Это единственный способ перечисления, дающий
- * проверяемую полноту: список дней — чек-лист, где видно, что пропущено.
- * У поискового эндпоинта пагинация курсорная (score + classPK через POST),
- * и по ней нельзя узнать, потеряна ли запись.
+ * The `leiturajornal?data=DD-MM-YYYY&secao=do1` page returns HTML
+ * containing a `<script id="params" type="application/json">` tag with
+ * the list of all articles for the day (~300). This is the only
+ * enumeration method that gives verifiable completeness: the list of days
+ * is a checklist showing exactly what's missing. The search endpoint uses
+ * cursor-based pagination (score + classPK via POST), and there's no way
+ * to tell whether a record was dropped.
  */
 
 export type DouIndexItem = {
@@ -26,9 +27,9 @@ export type DailyIndex = {
 }
 
 /**
- * Достаёт JSON из тега по id. Границы ищутся индексами, а не регуляркой:
- * внутри JSON есть фигурные скобки, и балансировать их регуляркой
- * ненадёжно.
+ * Extracts JSON from a tag by id. Boundaries are found by index, not
+ * regex: the JSON contains curly braces, and balancing them with a regex
+ * isn't reliable.
  */
 export function extractScriptJson(html: string, id: string): unknown {
   const marker = `id="${id}"`
@@ -65,8 +66,9 @@ function asInt(value: unknown): number | null {
 }
 
 /**
- * `null` — разметка изменилась (нет тега params). Это не пустой день,
- * а сигнал, что источник сломался, и его нельзя глушить ретраями.
+ * `null` means the markup changed (no params tag). This is not an empty
+ * day: it's a signal that the source broke, and it must not be
+ * silenced with retries.
  */
 export function parseDailyIndex(html: string): DailyIndex | null {
   const params = extractScriptJson(html, 'params')
@@ -99,28 +101,28 @@ export function parseDailyIndex(html: string): DailyIndex | null {
 }
 
 /**
- * Иерархия органа: `Ministério da Justiça e Segurança Pública/Secretaria
- * Nacional de Justiça/Departamento de Migrações/...`. Последний сегмент
- * различается — наблюдались `Coordenação de Processos Migratórios`,
- * `Divisão de Naturalização, Nacionalidade e Apatridia`,
+ * The issuing body's hierarchy: `Ministério da Justiça e Segurança
+ * Pública/Secretaria Nacional de Justiça/Departamento de Migrações/...`.
+ * The last segment varies. Observed: `Coordenação de Processos
+ * Migratórios`, `Divisão de Naturalização, Nacionalidade e Apatridia`,
  * `Coordenação-Geral de Política Migratória`.
  */
 const HIERARCHY_PATTERN = /Departamento de Migra|Processos Migrat|Naturaliza/i
 
 /**
- * Трудовая миграция сидит в том же департаменте, но к натурализации
- * отношения не имеет: это разрешения на работу для компаний
+ * Labor migration sits in the same department but has nothing to do with
+ * naturalization: these are work permits for companies
  * (`Requerente: ... LTDA`, `Prazo: 2 Anos`, `Imigrante: ...`).
- * Одна такая страница дала 548 абзацев и 15 актов чистого шума,
- * поэтому исключается до загрузки, а не после разбора.
+ * One such page produced 548 paragraphs and 15 acts of pure noise, so
+ * it's excluded before fetching, not after parsing.
  */
 const HIERARCHY_EXCLUDE = /Imigra[çc][ãa]o Laboral/i
 
 /**
- * Второй, бесплатный фильтр: ключевое слово в заголовке или сниппете.
- * Иерархия может пропустить релевантный акт другого департамента, а
- * `content` в индексе уже есть — расширять фильтр позже можно
- * переразбором снапшотов, без обращения к сети.
+ * A second, free filter: a keyword in the title or snippet. The
+ * hierarchy filter can miss a relevant act from a different department,
+ * and `content` is already in the index, so the filter can be broadened
+ * later by reparsing snapshots, without hitting the network.
  */
 const KEYWORD_PATTERN = /naturaliza|nacionalidade brasileira/i
 
@@ -129,12 +131,12 @@ export type Selection = 'hierarchy' | 'keyword' | 'both'
 export type SelectedItem = DouIndexItem & { selectedBy: Selection }
 
 /**
- * Отбирает релевантные статьи и фиксирует, каким признаком.
+ * Selects relevant articles and records which signal matched.
  *
- * Иерархия ловит и нерелевантное (наблюдалась `Coordenação-Geral de
- * Imigração Laboral` — трудовая миграция, не натурализация), поэтому
- * `selectedBy` хранится: по нему можно отделить надёжные совпадения
- * от притянутых, не теряя данные.
+ * The hierarchy filter also catches irrelevant items (observed
+ * `Coordenação-Geral de Imigração Laboral`, labor migration, not
+ * naturalization), so `selectedBy` is kept: it lets reliable matches be
+ * separated from stretched ones without losing data.
  */
 export function selectRelevant(items: readonly DouIndexItem[]): SelectedItem[] {
   const selected: SelectedItem[] = []
@@ -157,7 +159,7 @@ export function selectRelevant(items: readonly DouIndexItem[]): SelectedItem[] {
   return selected
 }
 
-/** `29/07/2026` → `2026-07-29`. Возвращает null на неожидаемом формате. */
+/** `29/07/2026` → `2026-07-29`. Returns null on an unexpected format. */
 export function parsePubDate(pubDate: string | null): string | null {
   if (!pubDate) return null
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(pubDate.trim())

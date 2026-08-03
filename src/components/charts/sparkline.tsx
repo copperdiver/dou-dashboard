@@ -1,14 +1,14 @@
 /**
- * Спарклайн для плитки KPI: форма ряда без осей и подписей.
+ * Sparkline for a KPI tile: the series' shape, without axes or labels.
  *
- * Значение несёт число на плитке, спарклайн — только динамику, поэтому
- * шкала не подписана и начинается не от нуля: цель — разглядеть форму,
- * а не считать по ней величины.
+ * The number on the tile carries the value, the sparkline only carries the
+ * trend, so the scale is unlabeled and doesn't start at zero: the goal is
+ * to make out the shape, not to read magnitudes off it.
  *
- * Дни без наблюдения линия проходит насквозь: DOU выходит по будням,
- * и выходные — это отсутствие события, а не пробел в данных. Ноль вместо
- * них рисовать нельзя, поэтому точки просто не ставятся, а кривая идёт
- * от наблюдения к наблюдению.
+ * The line passes straight through days without an observation: DOU
+ * publishes on weekdays, and weekends are an absence of the event, not a
+ * gap in the data. Drawing zero for them would be wrong, so no points are
+ * placed there, and the curve just goes from observation to observation.
  */
 
 import { smoothPath } from './scale'
@@ -23,13 +23,13 @@ export function Sparkline({
   label,
 }: {
   values: (number | null)[]
-  /** Слот палитры серий 1..8. */
+  /** Series palette slot 1..8. */
   slot?: number
-  /** Подпись для чтения с экрана: что за ряд. */
+  /** Screen-reader label: what this series is. */
   label: string
 }) {
-  // Шкала строится по тем же значениям, что и линия: если считать её
-  // с нулями, форма прижималась бы к низу из-за дней без публикаций.
+  // The scale is built from the same values as the line: if it counted
+  // zeros, the shape would get pushed toward the bottom by days without publications.
   const known = values.filter((v): v is number => v !== null && v !== 0)
   if (known.length < 2) return null
 
@@ -41,8 +41,8 @@ export function Sparkline({
     values.length < 2 ? W / 2 : PAD + (index / (values.length - 1)) * (W - PAD * 2)
   const y = (value: number) => H - PAD - ((value - min) / span) * (H - PAD * 2)
 
-  // Ноль отбрасывается наравне с пропуском — как и на большом графике:
-  // это день без публикаций такого вида, а не провал показателя.
+  // Zero is dropped the same as a missing value, same as on the full-size
+  // chart: it's a day without publications of this kind, not a drop in the metric.
   const points = values
     .map((value, index) => ({ index, value }))
     .filter((p): p is { index: number; value: number } => p.value !== null && p.value !== 0)
@@ -66,8 +66,8 @@ export function Sparkline({
         strokeWidth={2}
         strokeLinecap="round"
         strokeLinejoin="round"
-        // Иначе неравномерное растяжение viewBox раздуло бы линию
-        // по горизонтали и сплющило по вертикали.
+        // Otherwise the viewBox's uneven scaling would stretch the line
+        // horizontally and squash it vertically.
         vectorEffect="non-scaling-stroke"
       />
 

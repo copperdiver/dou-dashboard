@@ -90,10 +90,10 @@ export default async function DenialsPage({
 type Labels = ReturnType<typeof getTranslator>['d']
 
 /**
- * Карточка отказа — одна и та же на всех ширинах.
+ * Denial card, the same at every width.
  *
- * Таблицы здесь нет намеренно: у записи переменное число причин с длинным
- * текстом, и в ячейку они не ложатся ни на каком экране.
+ * There's no table here on purpose: a record has a variable number of
+ * reasons with long text, and they don't fit into a cell at any screen size.
  */
 function DenialCard({ locale, item, d }: { locale: Locale; item: DenialItem; d: Labels }) {
   return (
@@ -124,14 +124,14 @@ function DenialCard({ locale, item, d }: { locale: Locale; item: DenialItem; d: 
   )
 }
 
-/** Пометки о характере решения: подтверждение, повтор, прекращение. */
+/** Marks about the nature of the decision: upheld, republication, termination. */
 function Marks({ item, d }: { item: DenialItem; d: Labels }) {
   const marks: string[] = []
 
   if (item.isUpheld) {
-    // Подтверждение без ссылки на первичное решение оговаривается отдельно:
-    // первичное решение вышло раньше загруженного периода, и делать вид,
-    // что мы его видели, нельзя.
+    // An upheld decision with no link to the primary one is called out
+    // separately: the primary decision was published before the loaded
+    // period, and we can't pretend we've seen it.
     marks.push(item.hasPrimary ? d.decision.upheld : d.decision.upheldNoPrimary)
   }
   if (item.isRepublication) marks.push(d.decision.republication)
@@ -150,11 +150,11 @@ function Marks({ item, d }: { item: DenialItem; d: Labels }) {
 }
 
 /**
- * Причина отказа.
+ * Denial reason.
  *
- * Перевода может не быть: причина попадает в базу с португальским
- * оригиналом и переводится позже. Показываем оригинал и честно помечаем
- * его таковым, а не прячем запись до перевода.
+ * A translation may not exist yet: the reason lands in the database with
+ * the Portuguese original and gets translated later. We show the original
+ * and honestly mark it as such, rather than hiding the record until translated.
  */
 function Reason({
   locale,

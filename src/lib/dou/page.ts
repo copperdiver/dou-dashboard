@@ -1,9 +1,10 @@
 /**
- * Извлечение текстовых блоков со страницы статьи DOU.
+ * Extracting text blocks from a DOU article page.
  *
- * Разметка стабильна и проста: `<p class="identifica">` — заголовок акта,
- * `<p class="dou-paragraph">` — абзац, `<p class="assina">` — подпись.
- * JS для получения текста не нужен, кодировка UTF-8.
+ * The markup is stable and simple: `<p class="identifica">` is the act's
+ * header, `<p class="dou-paragraph">` is a paragraph, `<p class="assina">`
+ * is a signature. No JS execution needed to get the text, encoding is
+ * UTF-8.
  */
 
 export type BlockClass = 'identifica' | 'dou-paragraph' | 'assina' | 'cargo' | 'ementa' | 'other'
@@ -52,7 +53,7 @@ function classOf(raw: string): BlockClass {
   return 'other'
 }
 
-/** Убирает теги, декодирует сущности, сводит пробелы. */
+/** Strips tags, decodes entities, collapses whitespace. */
 function toText(inner: string): string {
   return decodeEntities(
     inner
@@ -83,8 +84,9 @@ export function extractBlocks(html: string): Block[] {
 }
 
 /**
- * Тело статьи вообще не распознано. Отличать это от «статья без актов»
- * важно: первое — сломанная разметка, второе — законная пустота.
+ * The article body wasn't recognized at all. Distinguishing this from
+ * "article with no acts" matters: the former is broken markup, the
+ * latter is legitimate emptiness.
  */
 export function isEmptyPage(blocks: readonly Block[]): boolean {
   return blocks.length === 0

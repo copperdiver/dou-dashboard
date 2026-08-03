@@ -11,20 +11,20 @@ import {
 } from '@/components/form-controls'
 
 /**
- * Панель фильтров фида — одной строкой.
+ * Feed filter panel: a single row.
  *
- * Обычная GET-форма: значения оказываются в адресе, поиск пересылается
- * ссылкой и работает без JS. Списки — нативные `<select>`: на телефоне
- * они открываются системным барабаном, который удобнее любого своего
- * выпадающего меню и доступен с клавиатуры даром.
+ * A plain GET form: values end up in the URL, the search can be shared as
+ * a link and works without JS. The lists are native `<select>`s: on mobile
+ * they open the system picker wheel, which beats any custom dropdown and
+ * comes with keyboard accessibility for free.
  *
- * Подписей над полями нет: название поля стоит первым пунктом списка
- * и подсказкой в поиске, поэтому строка не двоится. Для чтения с экрана
- * имя поля продублировано скрытой подписью.
+ * There are no labels above the fields: the field name is the list's first
+ * item and the search placeholder, so the row doesn't double up. For
+ * screen readers, the field name is duplicated as a hidden label.
  *
- * Курсор пагинации в форму не попадает намеренно: смена фильтра обязана
- * возвращать к первой странице, иначе выдача начнётся с середины
- * прежнего, уже неактуального списка.
+ * The pagination cursor deliberately doesn't go into the form: changing a
+ * filter must return to the first page, otherwise results would start
+ * partway through the previous, now-stale list.
  */
 
 export type SelectField = {
@@ -79,8 +79,8 @@ export function FilterForm({
                 aria-label={field.label}
                 className={SELECT}
               >
-                {/* Пустое значение подписано названием поля: пока фильтр
-                    не выбран, список сам себя и называет. */}
+                {/* The empty value is labeled with the field's name: until a
+                    filter is chosen, the list names itself. */}
                 <option value="">{field.label}</option>
                 {field.options.map((option) => (
                   <option key={option.value} value={option.value}>

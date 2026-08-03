@@ -3,16 +3,16 @@ import { db } from '../../db/client'
 import { dailyReasonCategoryStats, dailyStats, reasonCategories } from '../../db/schema'
 
 /**
- * Ряды «категория причины × день» для дрилл-дауна.
+ * "Reason category x day" rows for the drilldown.
  *
- * Считаются из витрины `daily_reason_category_stats`: ради этого разреза
- * она и заведена — иначе каждая точка графика требовала бы join через
- * denial_reasons, denials и reason_categories.
+ * Computed from the `daily_reason_category_stats` mart: it was created
+ * precisely for this breakdown: otherwise every chart point would need
+ * a join through denial_reasons, denials, and reason_categories.
  *
- * Различаются три случая, и путать их нельзя:
- *  - день загружен, отказов по категории не было → 0;
- *  - день загружен, но выпуска не было или он не загружен → null, разрыв;
- *  - дня нет в витрине вовсе → тоже null.
+ * Three cases are distinguished, and they must not be conflated:
+ *  - the day is loaded, no denials for the category → 0;
+ *  - the day is loaded, but there was no edition or it isn't loaded → null, a gap;
+ *  - the day isn't in the mart at all → also null.
  */
 
 export type CategorySeries = {
@@ -21,7 +21,7 @@ export type CategorySeries = {
   nameEn: string
   colorSlot: number
   total: number
-  /** По одному значению на день из `days`, в том же порядке. */
+  /** One value per day from `days`, in the same order. */
   values: (number | null)[]
 }
 
@@ -74,7 +74,7 @@ export async function getCategorySeries(from: string, to: string): Promise<Categ
     series.values.push(row.denials)
     series.total += row.denials ?? 0
 
-    // Календарь общий для всех категорий, поэтому дни собираем по первой.
+    // The calendar is shared across all categories, so days are collected from the first one.
     if (byCode.size === 1) days.push(row.day)
   }
 

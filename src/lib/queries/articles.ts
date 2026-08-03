@@ -4,22 +4,23 @@ import { acts, approvals, countries, denials, sourcePages } from '../../db/schem
 import { formatCursor, PAGE_SIZE, type Cursor, type Page } from './feeds'
 
 /**
- * Фид обработанных публикаций DOU.
+ * Feed of processed DOU publications.
  *
- * Счётчики считаются на лету, а не берутся из витрины `source_page_stats`:
- * фид отсортирован по дате выпуска, а не по агрегату, поэтому keyset-
- * пагинация опирается на индекс `source_pages_edition_date_idx` и
- * материализовать ничего не нужно. Витрина понадобится, только если
- * появится сортировка по числу людей.
+ * Counters are computed on the fly rather than taken from the
+ * `source_page_stats` mart: the feed is sorted by edition date, not by
+ * an aggregate, so keyset pagination relies on the
+ * `source_pages_edition_date_idx` index and nothing needs to be
+ * materialized. A mart would only be needed if sorting by number of
+ * people were added.
  *
- * В выдачу попадают лишь разобранные страницы, и только те, где есть хоть
- * одна запись о человеке. Страницы без людей и без решений — это заголовки
- * вроде «Despachos» без содержимого, читать в них нечего.
+ * Only parsed pages make it into the result, and only ones with at
+ * least one person record. Pages without people and without decisions
+ * are headings like "Despachos" with no content: nothing to read there.
  *
- * Условие отбора шире, чем «есть одобрения или новые отказы»: страница,
- * где все решения — прекращения производства или подтверждения при
- * обжаловании, содержит данные о людях и выкидывать её нельзя. Такие
- * страницы показывают счётчик прочих решений.
+ * The selection condition is broader than "has approvals or new
+ * denials": a page where every decision is a case archival or an
+ * appeal upheld still contains data about people and shouldn't be
+ * dropped. Such pages show a count of other decisions.
  */
 
 export type ArticleItem = {
@@ -30,9 +31,9 @@ export type ArticleItem = {
   acts: number
   approvals: number
   denials: number
-  /** Прекращения, подтверждения отказа и прочие решения по делам. */
+  /** Archivals, upheld denials, and other case decisions. */
   otherDecisions: number
-  /** Самая частая страна рождения среди одобрений страницы. */
+  /** Most common country of birth among the page's approvals. */
   topCountryIso2: string | null
   topCountryRu: string | null
   topCountryEn: string | null
@@ -61,8 +62,8 @@ export async function getArticles(cursor: Cursor | null): Promise<Page<ArticleIt
       (select count(*)::int from ${approvals} ap
         where ap.page_id = p.id and ap.retired_at is null
           and ap.counts_as_new_approval)                                          as approvals,
-      -- Считаем только новые отказы: подтверждения при обжаловании и
-      -- повторные публикации не должны раздувать счётчик страницы.
+      -- Only count new denials: upheld appeals and republications
+      -- shouldn't inflate the page counter.
       (select count(*)::int from ${denials} dn
         where dn.page_id = p.id and dn.retired_at is null
           and dn.counts_as_new_denial)                                            as denials,
@@ -82,9 +83,9 @@ export async function getArticles(cursor: Cursor | null): Promise<Page<ArticleIt
          limit 1
       ) top on true
      where p.parse_status = 'ok'
-       -- Через exists, а не сравнением посчитанных выше колонок: так
-       -- планировщик останавливается на первой найденной записи и не
-       -- считает всю страницу ради ответа «пусто или нет».
+       -- Via exists rather than comparing the columns computed above:
+       -- this way the planner stops at the first matching row instead
+       -- of counting the whole page just to answer "empty or not".
        and (
          exists (select 1 from ${approvals} ap
                   where ap.page_id = p.id and ap.retired_at is null
@@ -105,8 +106,8 @@ export async function getArticles(cursor: Cursor | null): Promise<Page<ArticleIt
     items: shown.map((r) => ({
       id: r.id,
       editionDate: r.edition_date,
-      // Заголовок источника бывает пустым — тогда остаётся человекочитаемый
-      // фрагмент адреса, по которому статью хотя бы можно опознать.
+      // The source title can be empty. Then the fallback is a
+      // human-readable URL fragment that at least identifies the article.
       title: r.title?.trim() || r.url_title,
       url: r.url,
       acts: r.acts,

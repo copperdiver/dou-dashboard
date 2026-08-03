@@ -1,21 +1,21 @@
 /**
- * Состояние оформления, которое обязан знать сервер: тема и свёрнутость
- * меню.
+ * Presentation state the server must know about: theme and whether the
+ * nav menu is collapsed.
  *
- * Хранится в cookie, а не в localStorage, по одной причине: атрибуты
- * `data-theme` и `data-nav` висят на <html>. Если их проставляет скрипт,
- * React о них не знает — и при первой же клиентской навигации, меняющей
- * корневой сегмент (например, переключении языка), он перерисовывает
- * <html> и снимает «лишние» атрибуты. Тема молча сбрасывалась на
- * системную. Cookie приходит с запросом, поэтому атрибут ставится прямо
- * в разметке: React им владеет, снимать нечего, и мигания при первой
- * отрисовке тоже нет.
+ * Stored in a cookie rather than localStorage for one reason: the
+ * `data-theme` and `data-nav` attributes live on <html>. If a script
+ * sets them, React doesn't know about them, and on the very first
+ * client-side navigation that changes the root segment (e.g. switching
+ * language), React re-renders <html> and strips the "extra" attributes.
+ * The theme would silently reset to system. A cookie arrives with the
+ * request, so the attribute is set right in the markup: React owns it,
+ * there's nothing to strip, and there's no flash on first paint either.
  */
 
 export const THEME_COOKIE = 'dou-theme'
 export const NAV_COOKIE = 'dou-nav'
 
-/** Год: выбор оформления не должен слетать между визитами. */
+/** A year: the appearance choice shouldn't reset between visits. */
 export const COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 
 export type Theme = 'light' | 'dark' | 'system'
@@ -29,10 +29,10 @@ export function isNavCollapsed(value: string | undefined): boolean {
 }
 
 /**
- * Записывает cookie и сразу правит атрибут на <html>.
+ * Writes the cookie and immediately patches the attribute on <html>.
  *
- * Атрибут правится вручную ради мгновенного отклика: ждать ответа
- * сервера, чтобы перекрасить страницу по нажатию, недопустимо.
+ * The attribute is patched by hand for an instant response: waiting for
+ * a server round trip to repaint the page on a click is unacceptable.
  */
 export function writeUiCookie(name: string, value: string | null): void {
   try {
@@ -41,6 +41,6 @@ export function writeUiCookie(name: string, value: string | null): void {
         ? `${name}=; path=/; max-age=0; samesite=lax`
         : `${name}=${value}; path=/; max-age=${COOKIE_MAX_AGE}; samesite=lax`
   } catch {
-    // приватный режим — выбор просто не запомнится
+    // private browsing mode: the choice just won't be remembered
   }
 }

@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto'
 
 /**
- * Текстовые примитивы, общие для парсера, канонизации причин и сидов.
+ * Text primitives shared by the parser, reason canonicalization, and seeds.
  *
- * Нормализация делается здесь, в приложении, а не выражением в индексе:
- * unaccent() в Postgres объявлена STABLE, поэтому индекс по unaccent(name)
- * создать нельзя. Значит нормализованные значения — материализованные
- * колонки, и единственный источник правил нормализации — этот файл.
+ * Normalization is done here, in the application, rather than as an
+ * index expression: unaccent() in Postgres is declared STABLE, so an
+ * index on unaccent(name) can't be created. That means normalized
+ * values have to be materialized columns, and this file is the single
+ * source of truth for normalization rules.
  */
 
 export function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex')
 }
 
-/** Снимает диакритику: `Colômbia` → `Colombia`. */
+/** Strips diacritics: `Colômbia` → `Colombia`. */
 export function stripDiacritics(value: string): string {
   return value.normalize('NFD').replace(/\p{Mn}+/gu, '')
 }
@@ -23,23 +24,23 @@ export function collapseWhitespace(value: string): string {
 }
 
 /**
- * Ключ для поиска и сопоставления справочников: без диакритики,
- * в нижнем регистре, с одиночными пробелами.
+ * Key for search and reference-data matching: no diacritics,
+ * lowercase, single spaces.
  */
 export function normalizeKey(value: string): string {
   return collapseWhitespace(stripDiacritics(value).toLowerCase())
 }
 
 /**
- * Имя человека как отображаемое значение: снимает завершающую пунктуацию
- * (в источнике встречается `LOUTFIA CHARIF SAID ALI.`) и лишние пробелы,
- * но сохраняет диакритику и регистр.
+ * A person's name as a display value: strips trailing punctuation (the
+ * source has cases like `LOUTFIA CHARIF SAID ALI.`) and extra spaces,
+ * but keeps diacritics and case.
  */
 export function cleanPersonName(value: string): string {
   return collapseWhitespace(value).replace(/[.,;:\s]+$/, '')
 }
 
-/** Ключ поиска по имени человека. Дополнительно убирает пунктуацию. */
+/** Search key for a person's name. Additionally strips punctuation. */
 export function normalizeName(value: string): string {
   return collapseWhitespace(
     stripDiacritics(value)
@@ -49,15 +50,16 @@ export function normalizeName(value: string): string {
 }
 
 /*
- * Нормализация текста причины отказа живёт в src/lib/reasons/normalize.ts
- * (`reasonDedupKey`): там она нужна вместе с сохранением смещений для
- * спанов-доказательств, и две реализации неизбежно разошлись бы.
+ * Normalization of denial reason text lives in
+ * src/lib/reasons/normalize.ts (`reasonDedupKey`): it's needed there
+ * together with offset tracking for evidence spans, and two
+ * implementations would inevitably diverge.
  */
 
 /**
- * Предлог перед названием страны в DOU: `natural da Colômbia`,
+ * Preposition before a country name in DOU: `natural da Colômbia`,
  * `natural do Haiti`, `natural de Marrocos`, `natural dos Estados Unidos`.
- * Наблюдалось da(234) / do(219) / de(58) / dos(4).
+ * Observed frequencies: da(234) / do(219) / de(58) / dos(4).
  */
 const COUNTRY_PREPOSITION = /^(?:d[aeo]s?|d')\s+/i
 
@@ -66,13 +68,13 @@ export function normalizeCountryName(value: string): string {
 }
 
 /**
- * Номер процесса. В источнике сосуществуют два формата, замер на 17
- * страницах: `235881.0744976/2026` (719 вхождений) и стандартный NUP
- * `08000.038208/2025-70` (597). Плюс формы с префиксом
- * `Naturalizar-se nº ...` и с точкой на конце.
+ * Process number. The source has two coexisting formats, measured
+ * across 17 pages: `235881.0744976/2026` (719 occurrences) and the
+ * standard NUP `08000.038208/2025-70` (597). Plus variants with a
+ * `Naturalizar-se nº ...` prefix and a trailing period.
  *
- * Порядок проверки важен: NUP длиннее и проверяется первым, иначе
- * короткий шаблон отрезал бы у него контрольные цифры.
+ * Check order matters: NUP is longer and is checked first, otherwise
+ * the shorter pattern would chop off its check digits.
  */
 const PROCESS_PATTERNS: readonly RegExp[] = [
   /\d{5}\.\d{6}\/\d{4}-\d{2}/,
@@ -88,7 +90,7 @@ export function normalizeProcessNumber(value: string | null | undefined): string
   return null
 }
 
-/** Полный возраст на дату публикации. */
+/** Full age as of the publication date. */
 export function ageOn(birthDate: string, onDate: string): number | null {
   const birth = new Date(`${birthDate}T00:00:00Z`)
   const on = new Date(`${onDate}T00:00:00Z`)
@@ -102,10 +104,11 @@ export function ageOn(birthDate: string, onDate: string): number | null {
 }
 
 /*
- * Возрастных групп здесь нет сознательно. Границы заданы один раз —
- * в SQL насоса витрин (src/worker/pumps/rollup.ts, AGE_BUCKET_SQL) плюс
- * перечисление значений в `age_bucket` в схеме. Дублировать их функцией
- * на TypeScript значило бы держать два определения одних и тех же границ,
- * которые неизбежно разойдутся: UI читает готовые группы из витрины,
- * пересчитывать их ему не нужно.
+ * Age buckets are deliberately absent here. The boundaries are defined
+ * once, in the mart pump's SQL (src/worker/pumps/rollup.ts,
+ * AGE_BUCKET_SQL) plus the enum of values in `age_bucket` in the schema.
+ * Duplicating them as a TypeScript function would mean keeping two
+ * definitions of the same boundaries, which would inevitably diverge:
+ * the UI reads ready-made buckets from the mart and has no need to
+ * recompute them.
  */

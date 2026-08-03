@@ -1,36 +1,36 @@
 /**
- * Декодер правовых ссылок.
+ * Legal reference decoder.
  *
- * Ссылка на статью — это КОНТЕКСТ, а не причина: `art. 65` встречается
- * в 74% текстов отказа, и будь он причиной, крупнейшая категория графика
- * оказалась бы пустой по смыслу и утопила бы остальные.
+ * An article reference is CONTEXT, not a reason: `art. 65` appears in
+ * 74% of denial texts, and if it were treated as a reason, the chart's
+ * largest category would be meaningless and would drown out the rest.
  *
- * Но у ссылки есть декодируемая часть: номер `inciso` называет конкретное
- * требование закона. Часть текстов существо отказа словами не описывает
- * вовсе — только цитирует статью с инцизами, и без этого декодера они
- * уходили бы в LLM без нужды.
+ * But a reference has a decodable part: the `inciso` number names a
+ * specific legal requirement. Some texts don't describe the substance of
+ * the denial in words at all: they just cite the article with incisos,
+ * and without this decoder they'd go to the LLM unnecessarily.
  *
- * Сопоставления ниже включены только там, где смысл подтверждён и текстом
- * закона, и наблюдавшимися формулировками. Спорное не угадывается —
- * непокрытое честно уходит в LLM.
+ * The mappings below are included only where the meaning is confirmed by
+ * both the text of the law and the wordings actually observed. Anything
+ * uncertain isn't guessed at: it honestly goes to the LLM uncovered.
  */
 
 export type LegalRef = {
   /** `art.65`, `art.234`. */
   article: string
-  /** Римский номер инциза как в тексте: `II`. */
+  /** Roman numeral of the inciso as it appears in the text: `II`. */
   inciso: string | null
-  /** Slug атомарной причины, если инциз декодируется. */
+  /** Slug of the atomic reason, if the inciso is decodable. */
   slug: string | null
   start: number
   end: number
 }
 
 /**
- * Lei 13.445/2017, art. 65 — требования обычной натурализации.
- * Подтверждено наблюдавшимися текстами: `inciso I` встречается вместе
- * с «é menor de idade ... capacidade civil», `inciso III` — с
- * «comunicação em português».
+ * Lei 13.445/2017, art. 65: requirements for ordinary naturalization.
+ * Confirmed by observed texts: `inciso I` appears together with
+ * "é menor de idade ... capacidade civil", `inciso III` with
+ * "comunicação em português".
  */
 const ART_65: Record<string, string> = {
   I: 'minor_capacity',
@@ -40,10 +40,11 @@ const ART_65: Record<string, string> = {
 }
 
 /**
- * Decreto 9.199/2017, art. 234 — повторяет требования ст. 65 Закона.
- * Наблюдалось `art. 234, incisos II, III e IV` в паре с текстом про
- * подтверждение адреса, португальский язык и справки о судимости.
- * Инциз V встречался, но его смысл не подтверждён — не сопоставляем.
+ * Decreto 9.199/2017, art. 234: repeats the requirements of art. 65 of
+ * the law. Observed `art. 234, incisos II, III e IV` paired with text
+ * about proof of address, Portuguese language, and criminal record
+ * certificates. Inciso V was observed too, but its meaning isn't
+ * confirmed, so it's not mapped.
  */
 const ART_234: Record<string, string> = {
   I: 'minor_capacity',
@@ -53,10 +54,10 @@ const ART_234: Record<string, string> = {
 }
 
 /**
- * Decreto 9.199/2017, art. 245 — состав документов заявления.
- * Наблюдалось `Art. 245, I do Decreto 9.199/2017` вместе с
- * «não apresentou o(s) documento(s)», поэтому инциз I сопоставлен
- * с общей формулировкой о непредставленных документах.
+ * Decreto 9.199/2017, art. 245: the set of documents required for the
+ * application. Observed `Art. 245, I do Decreto 9.199/2017` together
+ * with "não apresentou o(s) documento(s)", so inciso I is mapped to the
+ * generic "missing documents" wording.
  */
 const ART_245: Record<string, string> = {
   I: 'docs_generic',
@@ -70,7 +71,7 @@ const ARTICLE_INCISOS: Record<string, Record<string, string>> = {
 
 const ROMAN = /^(?:i{1,3}|iv|v|vi{1,3}|ix|x)$/
 
-/** Разбирает перечисление римских номеров: `ii, iii e iv`. */
+/** Parses a list of roman numerals: `ii, iii e iv`. */
 function parseIncisos(raw: string): string[] {
   return raw
     .split(/\s*(?:,|\be\b)\s*/)
@@ -80,21 +81,22 @@ function parseIncisos(raw: string): string[] {
 }
 
 /*
- * Три порядка следования, все наблюдались:
+ * Three orderings, all observed:
  *   art. 65, incisos II, III e IV
  *   incisos II, III e IV do art. 65
  *   Art. 245, I do Decreto
- * Квантификаторы ограничены сверху и не вложены — на абзаце в 4000
- * символов регулярка не должна уходить в катастрофический backtracking,
- * потому что один Worker обслуживает и разбор, и загрузку.
+ * Quantifiers are capped and not nested: on a 4000-character paragraph
+ * the regex must not fall into catastrophic backtracking, because one
+ * Worker handles both parsing and ingestion.
  */
 /*
- * Римское число как единый класс `[ivx]{1,4}\b`, а НЕ альтернация
- * `i{1,3}|iv|v|...`: в альтернации `i{1,3}` пробуется первой, на входе
- * `inciso iv` она матчит одну `i`, и дальше ничего не требует дочитать
- * число до конца. Так `IV` разбирался как `I` — и «нет справок
- * о судимости» превращалось в «несовершеннолетний» в 32% текстов
- * вместо замеренного 1%. Проверку корректности числа делает parseIncisos.
+ * A roman numeral as a single character class `[ivx]{1,4}\b`, and NOT an
+ * alternation `i{1,3}|iv|v|...`: in the alternation, `i{1,3}` is tried
+ * first, and on input `inciso iv` it matches a single `i`, with nothing
+ * forcing it to read the number through to the end. That parsed `IV` as
+ * `I`, turning "no criminal record certificate" into "minor" in 32% of
+ * texts instead of the measured 1%. parseIncisos does the correctness
+ * check on the number.
  */
 const ROMAN_LIST = String.raw`[ivx]{1,4}\b(?:\s*(?:,|e)\s*[ivx]{1,4}\b)*`
 
@@ -116,14 +118,14 @@ const PATTERNS: readonly { re: RegExp; articleGroup: number; incisoGroup: number
   },
 ]
 
-/** Все упоминания статей — для `reason_texts.legal_refs`. */
+/** All article mentions, for `reason_texts.legal_refs`. */
 const ARTICLE_ONLY = /art(?:s?\.|igos?)\s*(\d{1,3})/g
 
 /**
- * Разбирает правовые ссылки в НОРМАЛИЗОВАННОМ тексте.
+ * Parses legal references in the NORMALIZED text.
  *
- * Возвращает и декодированные инцизы (со slug), и упоминания статей без
- * инцизов (slug = null) — вторые идут в контекст, а не в причины.
+ * Returns both decoded incisos (with a slug) and article mentions
+ * without an inciso (slug = null); the latter go into context, not reasons.
  */
 export function extractLegalRefs(normalizedText: string): LegalRef[] {
   const refs: LegalRef[] = []
@@ -146,7 +148,7 @@ export function extractLegalRefs(normalizedText: string): LegalRef[] {
     }
   }
 
-  // Статьи без инцизов — только как контекст.
+  // Articles without incisos: context only.
   ARTICLE_ONLY.lastIndex = 0
   for (const match of normalizedText.matchAll(ARTICLE_ONLY)) {
     const article = `art.${match[1]}`
@@ -165,7 +167,7 @@ export function extractLegalRefs(normalizedText: string): LegalRef[] {
   return refs.sort((a, b) => a.start - b.start)
 }
 
-/** Строки для `reason_texts.legal_refs`: `art.65:III` либо `art.221`. */
+/** Strings for `reason_texts.legal_refs`: `art.65:III` or `art.221`. */
 export function formatLegalRefs(refs: readonly LegalRef[]): string[] {
   return [...new Set(refs.map((r) => (r.inciso ? `${r.article}:${r.inciso}` : r.article)))].sort()
 }

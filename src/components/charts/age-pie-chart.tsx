@@ -5,22 +5,22 @@ import type { Locale } from '@/i18n'
 import { formatNumber, formatPercent } from '@/lib/format'
 
 /**
- * Возраст получивших гражданство — кольцевая диаграмма.
+ * Age of naturalized applicants: a donut chart.
  *
- * Кольцевая выбрана заказчиком осознанно. У формы есть цена: группы
- * упорядочены по возрастанию, а круг порядок не показывает, и сравнивать
- * секторы близкой величины на глаз нельзя. Поэтому здесь обязательны
- * легенда со значениями и долями и таблица — и это не украшение, а
- * компенсация: три слота палитры в светлой теме не проходят контраст 3:1,
- * значит цвет не может нести смысл в одиночку.
+ * The donut was chosen deliberately by the client. The form has a cost:
+ * groups are ordered by age ascending, but a circle doesn't show order, and
+ * sectors close in size can't be compared by eye. That's why a legend with
+ * values and shares, plus a table, are mandatory here, and it's not
+ * decoration, it's compensation: three palette slots fail 3:1 contrast in
+ * the light theme, so color can't carry meaning on its own.
  *
- * Между секторами оставлен зазор цветом поверхности: без него соседние
- * дуги сливаются в одну при дальтонизме.
+ * A surface-colored gap is left between sectors: without it, neighboring
+ * arcs merge into one under color blindness.
  *
- * Сектор и строка легенды подсвечиваются вместе и в обе стороны: связать
- * их по цвету глазами тем труднее, чем ближе секторы по величине, а три
- * слота палитры в светлой теме к тому же не проходят контраст. Подсветка
- * подключается к наведению и к фокусу с клавиатуры.
+ * A sector and its legend row highlight together, in both directions:
+ * connecting them by color alone gets harder the closer the sectors are in
+ * size, and three palette slots in the light theme also fail contrast.
+ * The highlight responds to both hover and keyboard focus.
  */
 
 export type AgeSlice = {
@@ -33,7 +33,7 @@ const SIZE = 200
 const RADIUS = 70
 const THICKNESS = 30
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
-/** Зазор между секторами в единицах длины дуги. */
+/** Gap between sectors, in arc-length units. */
 const GAP = 3
 
 export function AgePieChart({
@@ -74,11 +74,11 @@ export function AgePieChart({
     ...slice,
     slot: index + 1,
     share: slice.approvals / total,
-    // Зазор съедается у конца дуги; для совсем узких секторов он
-    // ограничен, иначе сектор исчез бы целиком.
+    // The gap eats into the end of the arc; for very narrow sectors it's
+    // capped, otherwise the sector would disappear entirely.
     dash: Math.max((lengths[index] ?? 0) - GAP, 0.5),
-    // Групп семь, поэтому префиксная сумма пересчётом дешевле накопителя
-    // и не заводит изменяемое состояние внутри отрисовки.
+    // There are seven groups, so a recomputed prefix sum is cheaper than an
+    // accumulator and avoids introducing mutable state inside render.
     offset: lengths.slice(0, index).reduce((sum, length) => sum + length, 0),
   }))
 
@@ -105,8 +105,8 @@ export function AgePieChart({
                   r={RADIUS}
                   fill="none"
                   stroke={`var(--series-${arc.slot})`}
-                  // Активный сектор чуть толще, остальные приглушены:
-                  // толщина работает и там, где цвет различить трудно.
+                  // The active sector is slightly thicker, the rest are dimmed:
+                  // thickness still works where color is hard to tell apart.
                   strokeWidth={active === arc.bucket ? THICKNESS + 6 : THICKNESS}
                   strokeOpacity={dimmed ? 0.35 : 1}
                   strokeDasharray={`${arc.dash} ${CIRCUMFERENCE - arc.dash}`}
@@ -119,8 +119,8 @@ export function AgePieChart({
               )
             })}
           </g>
-          {/* В центре — итог, а при наведении значение выбранной группы:
-              так число не приходится искать глазами в легенде. */}
+          {/* The center shows the total, and on hover the selected group's
+              value: this way the number doesn't need to be hunted down in the legend. */}
           <text
             x={SIZE / 2}
             y={SIZE / 2 - 2}
@@ -139,16 +139,16 @@ export function AgePieChart({
           </text>
         </svg>
 
-        {/* Легенда со значениями, а не только с названиями: по кольцу
-            величины не считываются. */}
+        {/* Legend with values, not just names: magnitudes can't be read
+            off the ring itself. */}
         <ul className="grid w-full grid-cols-2 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-1">
           {arcs.map((arc) => {
             const on = active === arc.bucket
 
             return (
               <li key={arc.bucket}>
-                {/* Кнопка, а не просто строка: подсветка должна работать
-                    и с клавиатуры, а не только под курсором. */}
+                {/* A button, not just a row: the highlight must work from
+                    the keyboard too, not just under the cursor. */}
                 <button
                   type="button"
                   onMouseEnter={() => setActive(arc.bucket)}

@@ -1,11 +1,12 @@
 /**
- * Общая арифметика шкал. Держится в одном месте: разошедшиеся правила
- * делений в соседних графиках читаются как разные единицы измерения.
+ * Shared scale arithmetic. Kept in one place: if neighboring charts drift
+ * to different tick rules, they read as different units of measurement.
  */
 
 /**
- * Подписи оси Y: «красивый» шаг с 3–5 интервалами и минимальным запасом
- * сверху — иначе шкала до 1500 при максимуме 1119 съедает четверть высоты.
+ * Y-axis labels: a "nice" step with 3-5 intervals and minimal headroom.
+ * Otherwise a scale that goes to 1500 for a max of 1119 eats a quarter of
+ * the chart's height for nothing.
  */
 export function niceTicks(max: number): number[] {
   if (max <= 0) return [0, 1]
@@ -36,17 +37,17 @@ export function niceTicks(max: number): number[] {
 export type Point = { x: number; y: number }
 
 /**
- * Сглаженная линия через точки — монотонная кубическая интерполяция
- * (Фрич — Карлсон).
+ * Smoothed line through the points: monotonic cubic interpolation
+ * (Fritsch-Carlson).
  *
- * Обычный сплайн (Catmull-Rom) здесь не годится: он выгибается за
- * пределы соседних значений и between двумя точками рисует пик или
- * провал, которого в данных нет. На счётчиках людей это означало бы
- * выдуманные всплески и уход ниже нуля — то есть график врал бы.
+ * A plain spline (Catmull-Rom) doesn't work here: it overshoots past
+ * neighboring values and draws a peak or dip between two points that
+ * isn't in the data. For headcounts, that would mean invented spikes and
+ * dips below zero. The chart would be lying.
  *
- * Монотонная схема гарантирует, что на отрезке между соседними точками
- * кривая не выходит за их значения: форма сглажена, но ни одно
- * наблюдение не придумано.
+ * The monotonic scheme guarantees the curve never overshoots the values
+ * on either side of a segment: the shape is smoothed, but no observation
+ * is made up.
  */
 export function smoothPath(points: Point[]): string {
   if (points.length === 0) return ''
@@ -65,9 +66,9 @@ export function smoothPath(points: Point[]): string {
     slope.push(h === 0 ? 0 : (points[i + 1]!.y - points[i]!.y) / h)
   }
 
-  // Касательные: на стыке разнонаправленных участков — ноль, иначе
-  // среднее соседних наклонов. Так локальный экстремум остаётся ровно
-  // в точке наблюдения и не съезжает между ними.
+  // Tangents: zero where neighboring segments change direction,
+  // otherwise the average of the adjacent slopes. That keeps a local
+  // extremum exactly at the observed point instead of drifting between them.
   const m: number[] = [slope[0] ?? 0]
   for (let i = 1; i < n - 1; i += 1) {
     const a = slope[i - 1]!
@@ -76,8 +77,8 @@ export function smoothPath(points: Point[]): string {
   }
   m.push(slope[n - 2] ?? 0)
 
-  // Ограничение Фрича — Карлсона: не даёт кривой выйти за коридор,
-  // заданный соседними значениями.
+  // Fritsch-Carlson constraint: keeps the curve inside the band bounded
+  // by the neighboring values.
   for (let i = 0; i < n - 1; i += 1) {
     const s = slope[i]!
     if (s === 0) {
@@ -106,7 +107,7 @@ export function smoothPath(points: Point[]): string {
   return d
 }
 
-/** Прямоугольник со скруглённым верхом и прямым основанием. */
+/** Rectangle with rounded top corners and a flat base. */
 export function topRoundedPath(
   x: number,
   y: number,
@@ -126,7 +127,7 @@ export function topRoundedPath(
   ].join(' ')
 }
 
-/** Прямоугольник со скруглённым правым концом — для горизонтальных столбиков. */
+/** Rectangle with a rounded right end, used for horizontal bars. */
 export function endRoundedPath(
   x: number,
   y: number,

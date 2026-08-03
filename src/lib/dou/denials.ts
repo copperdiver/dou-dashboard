@@ -1,17 +1,16 @@
 import { cleanPersonName, normalizeProcessNumber, stripDiacritics } from '../text'
 
 /**
- * Разбор блоков отказа.
+ * Parsing denial blocks.
  *
- * Блок — пять абзацев подряд:
+ * A block is five consecutive paragraphs:
  *   `Código: 867230`
  *   `Assunto: Indeferimento do pedido`
  *   `Processo: 235881.0744976/2026`
  *   `Interessado: LIBAN ORTEGA GONZALEZ`
- *   длинный текст причины
+ *   long reason text
  *
- * `Código` — лучший естественный ключ блока и используется для
- * дедупликации.
+ * `Código` is the block's best natural key and is used for deduplication.
  */
 
 export type DecisionKind = 'denial' | 'approval' | 'void' | 'archived' | 'other'
@@ -23,7 +22,7 @@ export type ParsedDenial = {
   codigo: string | null
   assuntoRaw: string | null
   decisionKind: DecisionKind
-  /** `Manutenção de Indeferimento` — подтверждение прежнего решения. */
+  /** `Manutenção de Indeferimento`: an upheld prior decision. */
   isUpheld: boolean
   subjectKind: SubjectKind
   processNumber: string | null
@@ -38,10 +37,10 @@ export type DenialExtraction = {
 }
 
 /**
- * Метка блока во всех наблюдавшихся написаниях:
+ * The block label in every spelling observed:
  *   `Interessado:` (262), `Interessada:` (3), `Interessado(a):`
- *   `Processo:` и `Processo nº:` — «nº» стоит перед двоеточием
- * Каждая непокрытая форма теряла блок целиком, а не портила поле.
+ *   `Processo:` and `Processo nº:` ("nº" sits before the colon)
+ * Each uncovered form dropped the whole block, not just corrupted a field.
  */
 const LABEL =
   /^(C[oó]digo|Assunto|Processo|Interessad[oa]\(?a?\)?)\s*(?:n[ºo°]\.?)?\s*:\s*(.*)$/i
@@ -57,21 +56,22 @@ function labelOf(raw: string): Label {
 }
 
 /**
- * Классификация решения по `Assunto`.
+ * Classifies the decision by `Assunto`.
  *
- * Нормализация детерминированная и покрывает все 14 наблюдённых написаний
- * одним деревом: снятие диакритики, нижний регистр, срез точки. Это важно —
- * `Manutenção de Indeferimento do pedido`, `Manutenção do Indeferimento.`,
- * `MANUTENÇÃO DO INDEFERIMENTO` и `Manutenção de indeferimento do pedido`
- * означают одно и то же.
+ * Normalization is deterministic and covers all 14 observed spellings
+ * with one decision tree: strip diacritics, lowercase, trim the trailing
+ * period. This matters: `Manutenção de Indeferimento do pedido`,
+ * `Manutenção do Indeferimento.`, `MANUTENÇÃO DO INDEFERIMENTO`, and
+ * `Manutenção de indeferimento do pedido` all mean the same thing.
  */
 export function classifyAssunto(
   assunto: string | null,
   /**
-   * Текст решения. Вид процедуры в `Assunto` часто не назван: там стоит
-   * просто `Arquivamento do pedido`, а что именно прекращено — видно
-   * только в теле (`processo de Reconhecimento de Igualdade de Direitos`).
-   * Без этого чужие процедуры считались бы натурализацией.
+   * The decision text. The type of procedure is often not named in
+   * `Assunto`: it just says `Arquivamento do pedido`, and what's actually
+   * being terminated is only visible in the body
+   * (`processo de Reconhecimento de Igualdade de Direitos`). Without this,
+   * unrelated procedures would be counted as naturalization.
    */
   bodyText: string | null = null,
 ): {
@@ -92,12 +92,12 @@ export function classifyAssunto(
         ? 'other'
         : 'naturalization'
 
-  // «Tornar sem efeito» проверяется ПЕРЕД «manutenção»: наблюдалось
-  // `Tornar sem efeito o Recurso de Manutenção de Indeferimento` —
-  // это отмена решения, а не подтверждение отказа, и обратный порядок
-  // проверок засчитал бы его подтверждением.
+  // "Tornar sem efeito" is checked BEFORE "manutenção": observed
+  // `Tornar sem efeito o Recurso de Manutenção de Indeferimento`:
+  // that's a reversal of the decision, not an upheld denial, and the
+  // reverse check order would have counted it as upheld.
   if (/sem efeito/.test(n)) return { decisionKind: 'void', isUpheld: false, subjectKind }
-  // Прекращение производства — не отказ: заявление не рассмотрено по существу.
+  // Termination of proceedings is not a denial: the application wasn't ruled on.
   if (/arquivamento|arquivar/.test(n)) {
     return { decisionKind: 'archived', isUpheld: false, subjectKind }
   }
@@ -145,9 +145,9 @@ function finish(draft: Draft, ordinal: number): ParsedDenial | null {
 }
 
 /**
- * Абзацы после `Interessado:` и до следующего `Código:` — текст причины.
- * Их может быть больше одного, поэтому они склеиваются, а не берётся
- * только первый.
+ * Paragraphs after `Interessado:` and up to the next `Código:` are the
+ * reason text. There can be more than one, so they're concatenated
+ * rather than just taking the first.
  */
 export function extractDenials(paragraphs: readonly string[]): DenialExtraction {
   const denials: ParsedDenial[] = []
@@ -156,7 +156,7 @@ export function extractDenials(paragraphs: readonly string[]): DenialExtraction 
   let draft: Draft | null = null
   let ordinal = 0
 
-  /** Закрывает черновик. Внешнюю переменную не трогает — это делает вызов. */
+  /** Closes a draft. Doesn't touch the outer variable; the caller does that. */
   const push = (closing: Draft): void => {
     const parsed = finish(closing, ordinal)
     if (parsed) {
@@ -166,7 +166,7 @@ export function extractDenials(paragraphs: readonly string[]): DenialExtraction 
     }
     unparsed.push({
       text: [closing.codigo, closing.assunto, closing.processo].filter(Boolean).join(' | '),
-      reason: 'блок без Interessado',
+      reason: 'block without Interessado',
     })
   }
 
@@ -178,14 +178,14 @@ export function extractDenials(paragraphs: readonly string[]): DenialExtraction 
       const value = match[2]!.trim()
 
       /*
-       * Граница блока — повторение уже заполненной метки, а не
-       * обязательно `Código`. Порядок полей в источнике не фиксирован,
-       * замер дал четыре структуры:
-       *   codigo,assunto,processo,interessad*  (основная, 262 блока)
+       * A block boundary is a repeat of an already-filled label, not
+       * necessarily `Código`. Field order in the source isn't fixed;
+       * measurement found four structures:
+       *   codigo,assunto,processo,interessad*  (main, 262 blocks)
        *   assunto,interessad*,processo
        *   processo,assunto,interessad*
        *   processo,assunto
-       * Привязка к `Código` теряла бы три последних целиком.
+       * Anchoring to `Código` would drop the last three entirely.
        */
       if (draft !== null && draft[label] !== null) {
         push(draft)
@@ -200,7 +200,7 @@ export function extractDenials(paragraphs: readonly string[]): DenialExtraction 
       continue
     }
 
-    // Текст причины идёт после Interessado; всё, что раньше, — преамбула акта.
+    // Reason text follows Interessado; anything before it is the act's preamble.
     if (draft?.interessado) draft.reasonParts.push(text)
   }
 

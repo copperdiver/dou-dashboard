@@ -1,12 +1,12 @@
 /**
- * Ставит насос в очередь вне расписания.
+ * Queues a pump off-schedule.
  *
  *   npm run pump -- enumerate
  *   npm run pump -- fetch --repeat=5
  *
- * Нужно, чтобы не ждать тика крона при отладке и чтобы прогнать бэкфилл
- * быстрее обычного темпа. Сам насос от способа запуска не зависит:
- * работу он берёт из Postgres, поэтому лишний запуск безвреден.
+ * Needed to avoid waiting for the cron tick while debugging, and to run
+ * backfill faster than the usual pace. The pump itself doesn't care how
+ * it was launched: it pulls work from Postgres, so an extra run is harmless.
  */
 import { SCHEDULE } from '../src/worker/jobs'
 import { closeQueues, queues } from '../src/worker/queue'
@@ -24,17 +24,17 @@ try {
 
   if (!job) {
     console.error(
-      `Неизвестный насос «${name ?? ''}». Доступны: ${SCHEDULE.map((j) => j.name).join(', ')}`,
+      `Unknown pump "${name ?? ''}". Available: ${SCHEDULE.map((j) => j.name).join(', ')}`,
     )
     process.exitCode = 2
   } else {
     for (let i = 0; i < Math.max(1, repeat); i += 1) {
       await queues[job.queue].add(job.name, { manual: true })
     }
-    console.log(`[pump] ${job.name} поставлен в очередь ${job.queue} ×${Math.max(1, repeat)}`)
+    console.log(`[pump] ${job.name} queued to ${job.queue} ×${Math.max(1, repeat)}`)
   }
 } catch (error) {
-  console.error('[pump] ошибка:', error instanceof Error ? error.message : error)
+  console.error('[pump] error:', error instanceof Error ? error.message : error)
   process.exitCode = 1
 } finally {
   await closeQueues()

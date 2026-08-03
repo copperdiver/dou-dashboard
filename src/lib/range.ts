@@ -1,10 +1,11 @@
 /**
- * Период наблюдения. Живёт в адресе страницы, а не в состоянии компонента:
- * так вид пересылается ссылкой, работает без JS и переживает перезагрузку.
+ * Observation period. Lives in the page URL rather than component state:
+ * this way the view can be shared as a link, works without JS, and
+ * survives a reload.
  *
- * Даты здесь — календарные строки `YYYY-MM-DD`, без времени и пояса.
- * День выпуска DOU — это бразильские сутки; приводить его к моменту
- * времени значит сдвинуть на день в любом поясе с отрицательным смещением.
+ * Dates here are calendar strings `YYYY-MM-DD`, with no time or zone.
+ * A DOU edition day is a Brazilian calendar day; converting it to a
+ * point in time would shift it by a day in any zone with a negative offset.
  */
 
 export const RANGE_PRESETS = ['7d', '30d', '90d', 'mtd', 'all'] as const
@@ -16,7 +17,7 @@ export const DEFAULT_PRESET: RangePreset = '90d'
 export type ResolvedRange = {
   from: string
   to: string
-  /** `custom` — границы заданы вручную и не совпадают ни с одним пресетом. */
+  /** `custom` means the bounds were set manually and don't match any preset. */
   preset: RangePreset | 'custom'
 }
 
@@ -30,7 +31,7 @@ export function isIsoDate(value: string | undefined): value is string {
   return !Number.isNaN(date.getTime()) && toIsoDate(date) === value
 }
 
-/** Дата UTC в `YYYY-MM-DD`. */
+/** UTC date as `YYYY-MM-DD`. */
 export function toIsoDate(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
@@ -47,7 +48,7 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((b - a) / 86_400_000)
 }
 
-/** Сегодняшняя дата в поясе процесса (TZ из .env), а не в UTC. */
+/** Today's date in the process's time zone (TZ from .env), not UTC. */
 export function today(): string {
   const now = new Date()
   const year = now.getFullYear()
@@ -72,11 +73,12 @@ function presetRange(preset: RangePreset, anchor: string, bounds: DataBounds): R
 }
 
 /**
- * Разбирает период из адреса.
+ * Parses the period from the URL.
  *
- * Пресеты отсчитываются от сегодняшнего дня, а не от последнего дня
- * с данными: если конвейер отстал, «последние 30 дней» обязаны показать
- * это разрывом в хвосте графика, а не молча сдвинуть окно к свежим данным.
+ * Presets are counted from today, not from the last day with data: if
+ * the pipeline has fallen behind, "last 30 days" must show that as a
+ * gap at the tail of the chart, not silently shift the window to the
+ * latest data.
  */
 export function resolveRange(
   params: { range?: string; from?: string; to?: string },
@@ -95,7 +97,7 @@ export function resolveRange(
   return presetRange(preset, anchor, bounds)
 }
 
-/** Параметры адреса для ссылки на период. */
+/** URL parameters for a link to the period. */
 export function rangeParams(range: ResolvedRange): Record<string, string> {
   return range.preset === 'custom'
     ? { from: range.from, to: range.to }

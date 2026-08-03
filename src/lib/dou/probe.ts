@@ -3,29 +3,29 @@ import { douConfig } from '../env'
 import { getRedis, saveProbe, type DouProbe } from '../queries/dou-status'
 
 /**
- * Разовая проверка связи с источником — по требованию, а не по таймеру.
+ * A one-off connectivity check against the source, on demand, not on a
+ * timer.
  *
- * Идёт через обычный `DouClient`, а не через голый fetch: так проверка
- * подчиняется тем же правилам, что и насосы — минимальному интервалу,
- * суточному бюджету и паузе после 403. Проверка, которая ходит в обход
- * этих правил, могла бы сама навлечь блокировку, ради диагностики
- * которой её и запускают.
+ * Goes through the regular `DouClient`, not a bare fetch: this way the
+ * check obeys the same rules as the pumps (the minimum interval, the
+ * daily budget, and the cooldown after a 403). A check that bypasses these
+ * rules could trigger the very block it's meant to diagnose.
  *
- * Запрашивается дневной индекс за сегодня — тот самый адрес, на котором
- * спотыкается `enumerate`, а не корень сайта: корень может отвечать,
- * когда нужный раздел уже закрыт.
+ * Requests today's daily index: the exact address where `enumerate`
+ * trips up, not the site root. The root can respond even when the
+ * relevant section is already closed.
  */
 export async function probeDou(): Promise<DouProbe> {
   const redis = await getRedis()
   const at = new Date().toISOString()
 
   if (!redis) {
-    return { at, ok: false, status: null, message: 'REDIS_URL не задан', durationMs: 0 }
+    return { at, ok: false, status: null, message: 'REDIS_URL not set', durationMs: 0 }
   }
 
   const cfg = douConfig()
   const today = new Date().toISOString().slice(0, 10)
-  // Секций может быть несколько; для проверки связи хватит первой.
+  // There can be multiple sections; the first one is enough for a connectivity check.
   const section = cfg.sections[0] ?? 'do1'
 
   const client = new DouClient(redis)
@@ -37,7 +37,7 @@ export async function probeDou(): Promise<DouProbe> {
       at,
       ok: false,
       status: null,
-      message: `источник на паузе после 403, осталось ${Math.ceil(cooldown / 1000)} с`,
+      message: `source is cooling down after a 403, ${Math.ceil(cooldown / 1000)}s left`,
       durationMs: 0,
     }
     await saveProbe(probe)
@@ -59,20 +59,20 @@ function describe(
     case 'ok':
       return { ok: true, status: response.status, message: `HTTP ${response.status}` }
     case 'gone':
-      return { ok: false, status: response.status, message: `HTTP ${response.status}: выпуск снят` }
+      return { ok: false, status: response.status, message: `HTTP ${response.status}: edition was pulled` }
     case 'forbidden':
       return {
         ok: false,
         status: response.status,
-        message: `HTTP ${response.status}: источник закрыл доступ, пауза ${Math.round(
+        message: `HTTP ${response.status}: source blocked access, cooldown ${Math.round(
           response.cooldownMs / 1000,
-        )} с`,
+        )}s`,
       }
     case 'budget_exhausted':
       return {
         ok: false,
         status: null,
-        message: `исчерпан суточный бюджет запросов (${response.used} из ${response.limit})`,
+        message: `daily request budget exhausted (${response.used} of ${response.limit})`,
       }
     case 'transient':
       return { ok: false, status: response.status, message: response.message }

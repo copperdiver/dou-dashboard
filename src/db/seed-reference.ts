@@ -1,15 +1,15 @@
 /**
- * Заливка справочников: страны, алиасы, штаты, категории и атомарные
- * причины отказа.
+ * Seeds reference data: countries, aliases, states, categories, and atomic
+ * denial reasons.
  *
  *   npm run db:seed-reference
  *
- * Идемпотентно: повторный запуск обновляет названия и добавляет новые
- * строки, но не плодит дублей и не затирает причины, отредактированные
- * вручную (`reasons.is_manually_edited`).
+ * Idempotent: re-running updates names and adds new rows, but doesn't
+ * create duplicates and doesn't overwrite reasons that were edited
+ * manually (`reasons.is_manually_edited`).
  *
- * Это не демо-данные — без справочников не работает сопоставление стран
- * и штатов, поэтому скрипт входит в обычный порядок развёртывания.
+ * This isn't demo data: country and state matching doesn't work without
+ * this reference data, so the script is part of the regular deployment flow.
  */
 import { eq, sql } from 'drizzle-orm'
 import { reasonDedupKey } from '../lib/reasons/normalize'
@@ -53,10 +53,10 @@ async function seedCountries(): Promise<Map<string, number>> {
 
   const rows = await db.select({ id: countries.id, iso2: countries.iso2 }).from(countries)
   const byIso2 = new Map(rows.map((r) => [r.iso2, r.id]))
-  console.log(`[seed] страны: ${rows.length}`)
+  console.log(`[seed] countries: ${rows.length}`)
 
-  // Название из ISO само является алиасом: сопоставление идёт по
-  // нормализованному ключу, а не по точному совпадению строки.
+  // The ISO name is itself an alias: matching happens by normalized
+  // key, not by exact string match.
   const aliases = new Map<string, { countryId: number; isAmbiguous: boolean; note: string | null }>()
 
   for (const c of [...COUNTRY_SEED, ...EXTRA_COUNTRY_SEED]) {
@@ -65,12 +65,12 @@ async function seedCountries(): Promise<Map<string, number>> {
     aliases.set(normalizeCountryName(c.namePt), { countryId: id, isAmbiguous: false, note: null })
   }
 
-  // Явные алиасы из источника перекрывают автоматические.
+  // Explicit aliases from the source override the automatic ones.
   let unresolved = 0
   for (const a of COUNTRY_ALIAS_SEED) {
     const id = byIso2.get(a.iso2)
     if (id === undefined) {
-      console.warn(`[seed] алиас «${a.alias}» ссылается на неизвестный ISO2 ${a.iso2}`)
+      console.warn(`[seed] alias "${a.alias}" references unknown ISO2 ${a.iso2}`)
       unresolved += 1
       continue
     }
@@ -100,7 +100,7 @@ async function seedCountries(): Promise<Map<string, number>> {
       },
     })
 
-  console.log(`[seed] алиасы стран: ${aliases.size}${unresolved ? ` (не разрешено: ${unresolved})` : ''}`)
+  console.log(`[seed] country aliases: ${aliases.size}${unresolved ? ` (unresolved: ${unresolved})` : ''}`)
   return byIso2
 }
 
@@ -126,8 +126,8 @@ async function seedStates(): Promise<void> {
     const id = byUf.get(s.uf)
     if (id === undefined) continue
     aliases.set(normalizeKey(s.namePt), id)
-    // Штат встречается и без слова «estado», и с ним — ключ один и тот же
-    // после нормализации, поэтому дополнительных форм не нужно.
+    // The state name appears both with and without the word "estado".
+    // Normalization produces the same key either way, so no extra forms are needed.
   }
   for (const a of BR_STATE_ALIAS_SEED) {
     const id = byUf.get(a.uf)
@@ -142,7 +142,7 @@ async function seedStates(): Promise<void> {
       set: { stateId: sql`excluded.state_id` },
     })
 
-  console.log(`[seed] штаты: ${rows.length}, алиасы: ${aliases.size}`)
+  console.log(`[seed] states: ${rows.length}, aliases: ${aliases.size}`)
 }
 
 async function seedReasons(): Promise<void> {
@@ -168,7 +168,7 @@ async function seedReasons(): Promise<void> {
   for (const r of REASON_SEED) {
     const categoryId = byCode.get(r.categoryCode)
     if (categoryId === undefined) {
-      throw new Error(`причина «${r.slug}» ссылается на неизвестную категорию «${r.categoryCode}»`)
+      throw new Error(`reason "${r.slug}" references unknown category "${r.categoryCode}"`)
     }
     values.push({
       slug: r.slug,
@@ -182,7 +182,7 @@ async function seedReasons(): Promise<void> {
     })
   }
 
-  // Ручные правки не затираются: строка обновляется только если
+  // Manual edits aren't overwritten: the row is only updated if
   // is_manually_edited = false.
   await db
     .insert(reasons)
@@ -199,16 +199,16 @@ async function seedReasons(): Promise<void> {
       setWhere: eq(reasons.isManuallyEdited, false),
     })
 
-  console.log(`[seed] категории: ${catRows.length}, атомарные причины: ${values.length}`)
+  console.log(`[seed] categories: ${catRows.length}, atomic reasons: ${values.length}`)
 }
 
 try {
   await seedCountries()
   await seedStates()
   await seedReasons()
-  console.log('[seed] справочники готовы')
+  console.log('[seed] reference data ready')
 } catch (error) {
-  console.error('[seed] ошибка:', error)
+  console.error('[seed] error:', error)
   process.exitCode = 1
 } finally {
   await closePool()

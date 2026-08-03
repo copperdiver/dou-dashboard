@@ -4,29 +4,30 @@ import { buildSchema, buildStablePrefix, parseEnrichPayload, PROMPT_VERSION } fr
 import type { EnrichInput, EnrichResult, ReasonEnricher } from './types'
 
 /**
- * Обогащение причин отказа через Claude.
+ * Denial reason enrichment via Claude.
  *
- * Ключевые особенности модели, учтённые здесь:
+ * Model quirks accounted for here:
  *
- *  - На claude-opus-5 мышление включено ПО УМОЛЧАНИЮ, и `max_tokens`
- *    ограничивает мышление вместе с текстом ответа. Отсюда запас в 8000:
- *    при тесном лимите ответ обрезался бы посреди JSON.
- *  - `temperature`/`top_p`/`top_k` на этой модели возвращают 400 —
- *    их здесь нет и быть не должно.
- *  - Отказ приходит как успешный HTTP 200 со `stop_reason: "refusal"`,
- *    поэтому статус проверяется ДО чтения content: обращение к
- *    content[0] на отказе упало бы.
- *  - Стабильная часть промпта (список известных причин и категорий)
- *    кешируется. Кеш — это префиксное совпадение, поэтому изменчивый
- *    остаток текста идёт в сообщение пользователя, а не в system.
+ *  - On claude-opus-5, thinking is enabled BY DEFAULT, and `max_tokens`
+ *    caps thinking together with the response text. Hence the 8000
+ *    headroom: with a tight limit the response would get cut off mid-JSON.
+ *  - `temperature`/`top_p`/`top_k` return 400 on this model: they're
+ *    intentionally absent here.
+ *  - A refusal arrives as a successful HTTP 200 with
+ *    `stop_reason: "refusal"`, so the status is checked BEFORE reading
+ *    content: accessing content[0] on a refusal would throw.
+ *  - The stable part of the prompt (the list of known reasons and
+ *    categories) is cached. The cache is a prefix match, so the
+ *    changing remainder of the text goes into the user message, not
+ *    system.
  */
 
 const DEFAULT_MODEL = 'claude-opus-5'
 
 /**
- * То, что мы реально читаем из ответа. Объявлено структурно, потому что
- * бета-эндпоинт и обычный возвращают разные номинальные типы, а поля,
- * которые нужны здесь, у них общие.
+ * What we actually read from the response. Declared structurally because
+ * the beta endpoint and the regular one return different nominal types,
+ * but the fields needed here are shared between them.
  */
 type MessageLike = {
   stop_reason: string | null
@@ -45,14 +46,14 @@ export class ClaudeEnricher implements ReasonEnricher {
   readonly promptVersion = PROMPT_VERSION
 
   private readonly client: Anthropic
-  /** Выключается, если сервер отверг бета-параметр отката. */
+  /** Turned off if the server rejected the fallback beta parameter. */
   private serverFallbackEnabled = true
 
   constructor(options: { apiKey?: string; model?: string } = {}) {
-    // Модель задаётся отдельной переменной на провайдера: общий LLM_MODEL
-    // при переключении провайдера уехал бы в чужой API и дал бы там 404.
+    // Model is set via a provider-specific variable: a shared LLM_MODEL
+    // would leak into the wrong provider's API on a switch and 404 there.
     this.model = options.model ?? optionalEnv('LLM_MODEL_CLAUDE') ?? DEFAULT_MODEL
-    // Клиент сам повторяет 429 и 5xx с экспоненциальной задержкой.
+    // The client retries 429 and 5xx on its own with exponential backoff.
     this.client = new Anthropic({
       apiKey: options.apiKey ?? optionalEnv('ANTHROPIC_API_KEY'),
       maxRetries: 3,
@@ -73,20 +74,21 @@ export class ClaudeEnricher implements ReasonEnricher {
     const categoryCodes = input.categories.map((c) => c.code)
     const knownSlugs = input.known.map((k) => k.slug)
 
-    // Стабильный префикс: инструкции + справочники. Изменчивый остаток
-    // уходит в сообщение пользователя, иначе кеш не переиспользуется.
+    // Stable prefix: instructions + reference lists. The changing
+    // remainder goes into the user message, otherwise the cache wouldn't
+    // be reused.
     const stablePrefix = buildStablePrefix(input)
 
     try {
       const response = await this.request(stablePrefix, remainder, categoryCodes, knownSlugs)
 
-      // Отказ приходит как успешный ответ — проверяем до чтения content.
+      // A refusal arrives as a successful response. Check before reading content.
       if (response.stop_reason === 'refusal') {
         return {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: `модель отклонила запрос (${response.stop_details?.category ?? 'без категории'})`,
+          reviewReason: `model refused the request (${response.stop_details?.category ?? 'no category'})`,
           ...base,
         }
       }
@@ -96,7 +98,7 @@ export class ClaudeEnricher implements ReasonEnricher {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: 'ответ обрезан по max_tokens',
+          reviewReason: 'response truncated at max_tokens',
           ...base,
         }
       }
@@ -118,7 +120,7 @@ export class ClaudeEnricher implements ReasonEnricher {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: 'ответ не соответствует схеме',
+          reviewReason: "response doesn't match the schema",
           usage,
           ...base,
         }
@@ -144,13 +146,13 @@ export class ClaudeEnricher implements ReasonEnricher {
   ): Promise<MessageLike> {
     const params = {
       model: this.model,
-      // Мышление на этой модели включено по умолчанию и делит max_tokens
-      // с ответом — запас обязателен.
+      // Thinking is enabled by default on this model and shares
+      // max_tokens with the response, so headroom is mandatory.
       max_tokens: 8000,
       output_config: {
-        // Задача классификационная: низкое усилие даёт нужное качество
-        // заметно дешевле. Мышление при этом НЕ отключаем — на opus-5
-        // отключение имеет свои краевые дефекты.
+        // The task is a classification task: low effort gives the
+        // needed quality noticeably cheaper. Thinking is NOT disabled,
+        // though: disabling it has its own edge-case defects on opus-5.
         effort: 'low' as const,
         format: {
           type: 'json_schema' as const,
@@ -172,8 +174,8 @@ export class ClaudeEnricher implements ReasonEnricher {
     }
 
     try {
-      // Классификаторы модели могут отклонить запрос; серверный откат
-      // переигрывает его на другой модели в том же вызове.
+      // The model's classifiers can refuse a request; server-side
+      // fallback replays it on a different model within the same call.
       const response = await this.client.beta.messages.create({
         ...params,
         betas: ['server-side-fallback-2026-07-01'],
@@ -182,7 +184,7 @@ export class ClaudeEnricher implements ReasonEnricher {
       return response as MessageLike
     } catch (error) {
       if (error instanceof Anthropic.BadRequestError && /fallback/i.test(error.message)) {
-        // Параметр не принят этим аккаунтом или моделью — работаем без него.
+        // The parameter isn't accepted for this account or model, so fall back to without it.
         this.serverFallbackEnabled = false
         return (await this.client.messages.create(params)) as MessageLike
       }
@@ -192,12 +194,12 @@ export class ClaudeEnricher implements ReasonEnricher {
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof Anthropic.RateLimitError) return 'лимит запросов исчерпан'
-  if (error instanceof Anthropic.AuthenticationError) return 'неверный или отсутствующий ключ'
-  if (error instanceof Anthropic.PermissionDeniedError) return 'нет доступа к модели'
-  if (error instanceof Anthropic.NotFoundError) return 'модель не найдена'
-  // APIConnectionError проверяется раньше APIError: в этом SDK он его подкласс.
-  if (error instanceof Anthropic.APIConnectionError) return 'сеть недоступна'
-  if (error instanceof Anthropic.APIError) return `ошибка API ${error.status ?? '?'}: ${error.message}`
+  if (error instanceof Anthropic.RateLimitError) return 'rate limit exceeded'
+  if (error instanceof Anthropic.AuthenticationError) return 'invalid or missing key'
+  if (error instanceof Anthropic.PermissionDeniedError) return 'no access to the model'
+  if (error instanceof Anthropic.NotFoundError) return 'model not found'
+  // APIConnectionError is checked before APIError: in this SDK it's a subclass of it.
+  if (error instanceof Anthropic.APIConnectionError) return 'network unavailable'
+  if (error instanceof Anthropic.APIError) return `API error ${error.status ?? '?'}: ${error.message}`
   return error instanceof Error ? error.message : String(error)
 }

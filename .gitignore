@@ -4,24 +4,24 @@ out/
 build/
 dist/
 
-# env: игнорируется всё семейство, кроме шаблона.
-# Шире, чем перечисление конкретных имён: резервная копия вида
-# `.env.bak.1785390869` под `.env.local`/`.env.*.local` не попадала бы
-# и утекла бы в коммит вместе с ключами.
+# env: ignore the whole family except the templates.
+# Broader than listing specific names: a backup file like
+# `.env.bak.1785390869` next to `.env.local`/`.env.*.local` wouldn't be
+# caught otherwise, and would leak into a commit along with the keys.
 .env
 .env.*
-# Шаблоны без значений — исключения из правила выше и перечислены
-# поимённо: любой другой файл вида `.env.*` остаётся закрытым.
+# Templates with no real values: exceptions to the rule above, listed
+# by name. Any other `.env.*` file stays ignored.
 !.env.example
 !.env.production.example
 
-# Дампы базы. В репозитории им не место: это десятки мегабайт двоичных
-# данных с именами и датами рождения людей, и из истории git их потом
-# не вырезать без перезаписи.
+# Database dumps. These don't belong in the repo: tens of megabytes of
+# binary data with people's names and birth dates, and once in git
+# history they can't be removed without a rewrite.
 *.dump
 *.sql.gz
 
-# логи
+# logs
 *.log
 npm-debug.log*
 
@@ -31,7 +31,7 @@ npm-debug.log*
 .DS_Store
 Thumbs.db
 
-# прочее
+# misc
 *.tsbuildinfo
 next-env.d.ts
 coverage/

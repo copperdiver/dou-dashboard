@@ -16,11 +16,11 @@ import {
 import { addDays, resolveRange, today } from '@/lib/range'
 import type { AgeBucket } from '@/db/schema'
 
-// Данные меняются раз в несколько дней, но период приходит из адреса,
-// поэтому страница считается на запрос, а не прегенерируется.
+// Data changes every few days, but the period comes from the URL,
+// so the page is computed per request rather than pre-generated.
 export const dynamic = 'force-dynamic'
 
-/** Полгода динамики в плитках KPI — как просит ТЗ. */
+/** Half a year of trend in the KPI tiles, as the spec asks for. */
 const SPARK_DAYS = 180
 
 const AGE_ORDER: AgeBucket[] = ['0-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+']
@@ -52,9 +52,9 @@ export default async function OverviewPage({
 
   return (
     <div className="space-y-4">
-      {/* Плитки идут первыми и стоят до выбора периода намеренно: они
-          считаются за фиксированные 30 суток и от него не зависят.
-          Период управляет только графиками ниже и стоит рядом с ними. */}
+      {/* Tiles come first and sit before the period picker on purpose: they
+          are computed over a fixed 30 days and don't depend on it.
+          The period only controls the charts below and sits next to them. */}
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiTile
           locale={locale}
@@ -111,8 +111,8 @@ export default async function OverviewPage({
           comparedTo={d.kpi.comparedTo}
           unchangedLabel={d.common.unchanged}
           hint={kpis.prev.otherDecisions === 0 ? d.common.noData : undefined}
-          // Из чего складывается число: без расшифровки «прочие» ничего
-          // не говорят, а состав у этой плитки неоднородный.
+          // What the number is made of: without a breakdown, "other" says
+          // nothing, and this tile's composition is not uniform.
           note={[
             `${d.kpi.decisionsArchived} ${formatNumber(locale, kpis.breakdown.archived)}`,
             `${d.kpi.decisionsUpheld} ${formatNumber(locale, kpis.breakdown.upheld)}`,
@@ -176,8 +176,8 @@ export default async function OverviewPage({
                 colorSlot: c.colorSlot,
                 denials: c.denials,
               }))}
-              // Знаменатель — отказы с определённой причиной, а не все:
-              // у отказа без единой причины нет шанса попасть в числитель.
+              // The denominator is denials with an identified reason, not all
+              // of them: a denial with no reason at all can't land in the numerator.
               denialsTotal={categories.classified}
               note={d.charts.reasonCategoriesNote}
               baseNote={fill(d.charts.reasonCategoriesBase, {
@@ -225,7 +225,7 @@ export default async function OverviewPage({
   )
 }
 
-/** Параметры периода для ссылок на соседние экраны. */
+/** Period parameters for links to neighboring screens. */
 function searchToQuery(search: Search): string {
   const params = new URLSearchParams()
   if (search.from && search.to) {
@@ -257,8 +257,8 @@ async function loadOverview(search: Search) {
       approvals: sparkSeries.map((p) => p.approvals),
       denials: sparkSeries.map((p) => p.denials),
       decisions: sparkSeries.map((p) => p.otherDecisions),
-      // Доля отказов за день. Известна только когда известны обе величины
-      // и решения в этот день вообще были: иначе точка не «ноль», а пропуск.
+      // Share of denials for the day. Known only when both values are known
+      // and there were decisions that day at all: otherwise the point isn't "zero", it's missing.
       rate: sparkSeries.map((p) => {
         if (p.approvals === null || p.denials === null) return null
         const total = p.approvals + p.denials

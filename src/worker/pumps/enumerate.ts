@@ -14,21 +14,21 @@ type Claim = {
 }
 
 /**
- * Забирает пачку дней в работу.
+ * Claims a batch of days to work on.
  *
- * `for update skip locked` плюс аренда через next_attempt_at: если процесс
- * упадёт, строка не останется в running навсегда — по истечении аренды её
- * можно взять заново. Это и делает прогресс бэкфилла на 250 дней
- * восстанавливаемым без участия Redis.
+ * `for update skip locked` plus a lease via next_attempt_at: if the
+ * process crashes, the row doesn't stay stuck in running forever: once
+ * the lease expires it can be claimed again. This is what makes the
+ * 250-day backfill's progress recoverable without involving Redis.
  */
 async function claimDays(limit: number, leaseMs: number): Promise<Claim[]> {
   const result = await db.execute<Claim>(sql`
     with claimed as (
       select edition_date, section
       from ${ingestDays}
-      -- pending с истёкшим backoff либо running с истёкшей арендой.
-      -- failed не берём: это терминальное состояние до ручного сброса,
-      -- иначе окончательно упавший день ретраился бы вечно.
+      -- pending with expired backoff, or running with an expired lease.
+      -- We don't take failed: that's a terminal state until a manual
+      -- reset, otherwise a day that has finally failed would retry forever.
       where status in ('pending', 'running')
         and (next_attempt_at is null or next_attempt_at < now())
       order by priority, edition_date desc
@@ -55,7 +55,7 @@ async function markFailure(
   maxAttempts: number,
 ): Promise<'retry' | 'failed'> {
   const giveUp = claim.attempts >= maxAttempts
-  // Экспонента от номера попытки, потолок — час.
+  // Exponential backoff by attempt number, capped at an hour.
   const delaySeconds = Math.min(3600, 60 * 2 ** Math.max(0, claim.attempts - 1))
 
   await db.execute(sql`
@@ -71,34 +71,36 @@ async function markFailure(
 }
 
 /**
- * Кончился ли уже день выпуска по бразильскому календарю.
+ * Whether the edition day has already ended by the Brazilian calendar.
  *
- * Сравнение именно по Сан-Паулу, а не по времени сервера: выпуск живёт
- * по своему календарю, и наш часовой пояс к нему отношения не имеет.
- * При TZ=Europe/Moscow «сегодня» у сервера наступает на шесть часов
- * раньше бразильского — на этом расхождении день и терялся.
+ * Compared against São Paulo specifically, not server time: the edition
+ * lives on its own calendar, and our timezone is irrelevant to it. With
+ * TZ=Europe/Moscow, the server's "today" starts six hours before Brazil's.
+ * That mismatch is exactly how days used to get lost.
  */
 export function isEditionDayOver(editionDate: string, now: Date = new Date()): boolean {
-  // en-CA даёт как раз YYYY-MM-DD, поэтому строки сравнимы напрямую.
+  // en-CA gives exactly YYYY-MM-DD, so the strings are directly comparable.
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(now)
   return today > editionDate
 }
 
 /**
- * Пустой индекс: выпуска нет — или ещё нет.
+ * Empty index: no edition, or not yet.
  *
- * Различить это по одному ответу нельзя, а цена ошибки несимметрична.
- * Опрос свежего дня приходится на ночь по Бразилии: DOU выкладывает
- * выпуск утром, и до тех пор индекс пуст совершенно законно. Закрыть
- * день на этом основании — значит потерять его навсегда: статус
- * терминальный, а `discover` вставляет дни через `on conflict do nothing`
- * и закрытый день не переоткрывает. Так и терялись свежие выпуски.
+ * A single response can't tell these apart, and the cost of getting it
+ * wrong is asymmetric. Polling a fresh day happens at night Brazil time:
+ * DOU publishes the edition in the morning, and until then the index is
+ * legitimately empty. Closing the day on that basis loses it forever:
+ * the status is terminal, and `discover` inserts days via
+ * `on conflict do nothing`, so it never reopens a closed day. That's
+ * exactly how fresh editions used to go missing.
  *
- * Поэтому «выпуска не было» — вывод только про день, который уже прошёл
- * по бразильскому календарю. Пока день идёт, пустой индекс означает лишь
- * «ещё рано», и мы возвращаемся через несколько часов. Выходные от этого
- * стоят нескольких лишних запросов в сутки — на фоне суточного бюджета
- * это ничто, а пропущенный выпуск не восстановить.
+ * So "there was no edition" is only a valid conclusion for a day that
+ * has already passed by the Brazilian calendar. While the day is still
+ * ongoing, an empty index just means "too early," and we come back in a
+ * few hours. On weekends this costs a handful of extra requests a day
+ * (nothing against the daily budget) while a missed edition can't be
+ * recovered.
  */
 async function markEmptyIndex(claim: Claim, retryAfterHours: number): Promise<'no_edition' | 'retry'> {
   const dayIsOver = isEditionDayOver(claim.editionDate)
@@ -120,17 +122,17 @@ async function markEmptyIndex(claim: Claim, retryAfterHours: number): Promise<'n
 }
 
 /**
- * Тянет дневной индекс, сохраняет снапшот и апсертит релевантные статьи.
+ * Fetches the daily index, saves a snapshot, and upserts relevant articles.
  *
- * Снапшот сырого jsonArray хранится всегда: он позволяет позже расширить
- * фильтр релевантности и переразобрать историю, не обращаясь к сети.
+ * The raw jsonArray snapshot is always stored: it lets us later widen
+ * the relevance filter and re-parse history without hitting the network.
  */
 export const enumerate: Pump = async ({ log, client }: PumpContext) => {
   const { enumerateBatch, maxAttempts, claimLeaseMs, emptyIndexRetryHours } = pipelineConfig()
 
   const cooldown = await client.cooldownRemainingMs()
   if (cooldown > 0) {
-    log(`пауза источника ещё ${Math.ceil(cooldown / 1000)} с — пропускаю`)
+    log(`source cooldown for another ${Math.ceil(cooldown / 1000)}s, skipping`)
     return { itemsProcessed: 0, meta: { skipped: 'cooldown' }, cooldownMs: cooldown }
   }
 
@@ -148,8 +150,8 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     const response = await client.get(url)
 
     if (response.kind === 'budget_exhausted') {
-      log(`суточный бюджет запросов исчерпан (${response.used}/${response.limit})`)
-      await markFailure(claim, 'суточный бюджет запросов исчерпан', maxAttempts)
+      log(`daily request budget exhausted (${response.used}/${response.limit})`)
+      await markFailure(claim, 'daily request budget exhausted', maxAttempts)
       return {
         itemsProcessed: daysDone,
         meta: { days: daysDone, pages: pagesUpserted, budgetExhausted: true },
@@ -157,7 +159,7 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     }
 
     if (response.kind === 'forbidden') {
-      log(`403 от источника, пауза ${Math.round(response.cooldownMs / 1000)} с`)
+      log(`403 from source, pausing for ${Math.round(response.cooldownMs / 1000)}s`)
       await markFailure(claim, `HTTP ${response.status} (WAF)`, maxAttempts)
       return {
         itemsProcessed: daysDone,
@@ -167,11 +169,11 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     }
 
     if (response.kind === 'gone') {
-      // Выпуска за этот день не существует — это не сбой. Но если день ещё
-      // не кончился, его может и не существовать пока.
+      // No edition exists for this day. That's not a failure. But if the
+      // day isn't over yet, it may simply not exist yet.
       const outcome = await markEmptyIndex(claim, emptyIndexRetryHours)
       if (outcome === 'no_edition') noEdition += 1
-      else log(`${claim.editionDate}: выпуска пока нет (HTTP ${response.status}) → проверю позже`)
+      else log(`${claim.editionDate}: no edition yet (HTTP ${response.status}) → will check later`)
       continue
     }
 
@@ -185,24 +187,24 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     const index = parseDailyIndex(response.body)
 
     if (index === null) {
-      // 200, но нет <script id="params"> — вёрстка изменилась. Это главный
-      // сигнал «источник сломался», и глушить его ретраями нельзя.
+      // 200, but no <script id="params">: markup changed. This is the
+      // main signal that "the source broke," and it must not be muted with retries.
       schemaMismatch += 1
       await db.execute(sql`
         update ${ingestDays}
            set status = 'failed',
-               last_error = 'разметка изменилась: нет script#params',
+               last_error = 'markup changed: no script#params',
                next_attempt_at = null
          where edition_date = ${claim.editionDate} and section = ${claim.section}
       `)
-      log(`${claim.editionDate}: РАЗМЕТКА ИЗМЕНИЛАСЬ — нет script#params`)
+      log(`${claim.editionDate}: MARKUP CHANGED (no script#params)`)
       continue
     }
 
     if (index.items.length === 0) {
       const outcome = await markEmptyIndex(claim, emptyIndexRetryHours)
       if (outcome === 'no_edition') noEdition += 1
-      else log(`${claim.editionDate}: индекс пуст, день ещё идёт → проверю позже`)
+      else log(`${claim.editionDate}: index is empty, day still ongoing → will check later`)
       continue
     }
 
@@ -232,8 +234,8 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
           relevant.map((item) => ({
             urlTitle: item.urlTitle,
             url: articleUrl(item.urlTitle),
-            // Дата выпуска берётся из pubDate статьи, а не из опрашиваемого
-            // дня: они расходятся (акт от 28 июля печатается 29-го).
+            // The edition date comes from the article's pubDate, not from
+            // the polled day: they diverge (an act from July 28 gets printed on the 29th).
             editionDate: parsePubDate(item.pubDate) ?? claim.editionDate,
             section: claim.section,
             editionNumber: item.editionNumber,
@@ -245,8 +247,8 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
             selectedBy: item.selectedBy,
           })),
         )
-        // Уже загруженную страницу не сбрасываем в pending: обновляем
-        // только метаданные из индекса.
+        // Don't reset an already-fetched page back to pending: only its
+        // metadata from the index gets updated.
         .onConflictDoUpdate({
           target: sourcePages.urlTitle,
           set: {
@@ -275,12 +277,12 @@ export const enumerate: Pump = async ({ log, client }: PumpContext) => {
     `)
 
     daysDone += 1
-    log(`${claim.editionDate}: статей ${index.items.length}, релевантных ${relevant.length}`)
+    log(`${claim.editionDate}: articles ${index.items.length}, relevant ${relevant.length}`)
   }
 
   return {
-    // Дни без выпуска — тоже обработанная работа: иначе метрика прогона
-    // показывала бы ноль на пачке из одних выходных.
+    // Days without an edition are processed work too: otherwise the run
+    // metric would show zero for a batch consisting only of weekend days.
     itemsProcessed: daysDone + noEdition,
     meta: {
       days: daysDone,

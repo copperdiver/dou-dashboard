@@ -5,19 +5,20 @@ export { DEFAULT_LOCALE, isLocale, LOCALE_LABELS, LOCALES, type Locale } from '.
 export { getDictionary, type Dictionary } from './dictionaries'
 
 /*
- * Функции `t('some.key')` здесь нет намеренно. Словарь передаётся как
- * объект и читается через точку (`d.kpi.approvals30d`): опечатка в ключе
- * тогда — ошибка компиляции, а не пустая строка в интерфейсе, и не нужен
- * разбор пути на каждом обращении.
+ * There's no `t('some.key')` function here, on purpose. The dictionary
+ * is passed as an object and read via dot notation (`d.kpi.approvals30d`):
+ * a typo in the key then becomes a compile error instead of a blank
+ * string in the UI, and there's no need to parse a path on every access.
  */
 
 /**
- * Форма числительного по правилам языка.
+ * Plural form of a numeral, per the language's rules.
  *
- * `Intl.PluralRules` возвращает категорию CLDR: для русского one/few/many,
- * для английского one/other. Считать формы самому нельзя — правило для
- * русского нетривиально (21 → «отказ», 22 → «отказа», 25 → «отказов»),
- * и почти любая ручная реализация ошибается на числах вида 111.
+ * `Intl.PluralRules` returns a CLDR category: one/few/many for Russian,
+ * one/other for English. Computing the forms by hand isn't an option:
+ * the Russian rule is nontrivial (21 → "otkaz", 22 → "otkaza",
+ * 25 → "otkazov"), and almost every handwritten implementation gets
+ * numbers like 111 wrong.
  */
 export function plural(locale: Locale, count: number, forms: Plural): string {
   const category = new Intl.PluralRules(INTL_LOCALES[locale]).select(count)
@@ -34,12 +35,12 @@ export function plural(locale: Locale, count: number, forms: Plural): string {
   }
 }
 
-/** «5 отказов» / «5 denials». */
+/** "5 otkazov" (ru) / "5 denials" (en). */
 export function formatCount(locale: Locale, count: number, forms: Plural): string {
   return `${new Intl.NumberFormat(INTL_LOCALES[locale]).format(count)} ${plural(locale, count, forms)}`
 }
 
-/** Подстановка `{name}` в строку словаря. */
+/** Substitutes `{name}` placeholders into a dictionary string. */
 export function interpolate(template: string, values: Record<string, string | number>): string {
   return template.replace(/\{(\w+)\}/g, (match, key: string) =>
     key in values ? String(values[key]) : match,
@@ -53,7 +54,7 @@ export type Translator = {
   fill: (template: string, values: Record<string, string | number>) => string
 }
 
-/** Всё, что нужно серверному компоненту для вывода текста. */
+/** Everything a server component needs to render text. */
 export function getTranslator(locale: Locale): Translator {
   return {
     locale,

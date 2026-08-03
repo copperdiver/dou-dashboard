@@ -1,14 +1,14 @@
 /**
- * Сохраняет реальные страницы DOU как фикстуры для тестов парсера.
+ * Saves real DOU pages as fixtures for the parser tests.
  *
  *   npx tsx --env-file-if-exists=.env scripts/save-fixtures.ts
  *
- * Берёт HTML из уже загруженных страниц, а не из сети: фикстуры должны
- * быть воспроизводимы и не зависеть от доступности источника.
+ * Takes HTML from already-fetched pages, not from the network: fixtures
+ * need to be reproducible and not depend on the source's availability.
  *
- * Набор подобран по краевым случаям, а не по свежести: страница с одним
- * актом и с четырьмя, длинный список отказов, подтверждение отказа,
- * смена имени, прекращение производства.
+ * The set is picked for edge cases, not for freshness: a page with one
+ * act and one with four, a long denial list, an upheld denial, a name
+ * change, a discontinued proceeding.
  */
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -16,7 +16,7 @@ import { eq, inArray } from 'drizzle-orm'
 import { closePool, db } from '../src/db/client'
 import { sourcePageHtml, sourcePages } from '../src/db/schema'
 
-/** urlTitle → имя файла и что именно этот случай проверяет. */
+/** urlTitle → file name and what exactly this case tests. */
 const WANTED: Record<string, string> = {
   'portaria-n-6.824-de-28-de-julho-de-2026-722107012': 'approvals-four-acts',
   'portaria-n-6.823-de-27-de-julho-de-2026-721634928': 'approvals-single-person',
@@ -48,20 +48,20 @@ try {
     const name = WANTED[row.urlTitle]
     if (!name) continue
     writeFileSync(`${dir}/${name}.html`, row.html, 'utf8')
-    saved.push(`${name}.html (${Math.round(row.html.length / 1024)} КБ) ← ${row.urlTitle}`)
+    saved.push(`${name}.html (${Math.round(row.html.length / 1024)} KB) ← ${row.urlTitle}`)
   }
 
   const missing = Object.keys(WANTED).filter((u) => !rows.some((r) => r.urlTitle === u))
 
-  console.log(`Сохранено в ${dir}:`)
+  console.log(`Saved to ${dir}:`)
   for (const s of saved.sort()) console.log(`  ${s}`)
   if (missing.length > 0) {
-    console.log(`\nНе найдено в БД (загрузите соответствующие дни):`)
+    console.log(`\nNot found in DB (fetch the corresponding days):`)
     for (const m of missing) console.log(`  ${m}`)
     process.exitCode = 1
   }
 } catch (error) {
-  console.error('Ошибка:', error)
+  console.error('Error:', error)
   process.exitCode = 1
 } finally {
   await closePool()

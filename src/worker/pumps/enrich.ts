@@ -16,15 +16,15 @@ import { syncDenialReasons } from './canonize'
 import type { Pump } from './types'
 
 /**
- * Обогащение остатка через LLM.
+ * Enrichment of the remainder via the LLM.
  *
- * Берёт только тексты, которые правила не разобрали (по замеру — 6%),
- * и только непокрытую их часть. Ответ кешируется в `llm_cache` по хешу
- * входа, поэтому переразбор и повторные прогоны бесплатны.
+ * Only takes texts that the rules failed to parse (measured at 6%),
+ * and only their uncovered part. The response is cached in `llm_cache`
+ * by input hash, so re-parsing and repeated runs are free.
  *
- * Пачка маленькая: у очереди `dou-llm` concurrency 1, и это же снимает
- * весь класс гонок при создании канонических причин — распараллеливать
- * тут нечего.
+ * The batch is small: the `dou-llm` queue has concurrency 1, which also
+ * eliminates the whole class of races when creating canonical reasons:
+ * there's nothing to parallelize here.
  */
 
 const BATCH = 5
@@ -105,7 +105,7 @@ export const enrichReasons: Pump = async ({ log }) => {
       fromCache += 1
     } else {
       result = await enricher.enrich({ remainder, known, categories })
-      // Кешируем только полезный результат: отказ и сбой повторить стоит.
+      // Only a useful result gets cached: a refusal or a failure is worth retrying.
       if (!result.needsReview) {
         await db
           .insert(llmCache)
@@ -125,7 +125,7 @@ export const enrichReasons: Pump = async ({ log }) => {
         .update(reasonTexts)
         .set({ reviewState: 'needs_review', classifiedAt: new Date() })
         .where(eq(reasonTexts.id, claim.id))
-      log(`${claim.id.slice(0, 8)}: ${result.reviewReason ?? 'провайдер не дал результата'}`)
+      log(`${claim.id.slice(0, 8)}: ${result.reviewReason ?? 'provider returned no result'}`)
       continue
     }
 
@@ -144,8 +144,8 @@ export const enrichReasons: Pump = async ({ log }) => {
         const normalizedKey = reasonDedupKey(candidate.textPt).textNorm
         if (normalizedKey.length < 8) continue
 
-        // Апсерт по normalized_key: две параллельные записи одной и той же
-        // причины не создадут дубля даже если concurrency вырастет.
+        // Upsert by normalized_key: two parallel writes of the same
+        // reason won't create a duplicate even if concurrency grows.
         const slug = `llm-${sha256Hex(normalizedKey).slice(0, 12)}`
 
         await tx
@@ -190,8 +190,8 @@ export const enrichReasons: Pump = async ({ log }) => {
 
       await tx
         .update(reasonTexts)
-        // Новые причины приходят в status='draft': их стоит просмотреть,
-        // но текст уже классифицирован и в отчёте непонятых не висит.
+        // New reasons arrive with status='draft': worth a review, but the
+        // text is already classified and doesn't sit in the unresolved report.
         .set({ reviewState: 'auto', classifiedAt: new Date() })
         .where(eq(reasonTexts.id, claim.id))
 
@@ -201,9 +201,9 @@ export const enrichReasons: Pump = async ({ log }) => {
   }
 
   log(
-    `провайдер ${enricher.name}/${enricher.model}: текстов ${claims.length}, ` +
-      `обогащено ${enriched}, из кеша ${fromCache}, новых причин ${created}, ` +
-      `осталось непонятыми ${stillUnresolved}`,
+    `provider ${enricher.name}/${enricher.model}: texts ${claims.length}, ` +
+      `enriched ${enriched}, from cache ${fromCache}, new reasons ${created}, ` +
+      `still unresolved ${stillUnresolved}`,
   )
 
   return {

@@ -4,15 +4,14 @@ import { normalizeWithMap, preambleEnd, segmentClauses, toRawSpan, type Normaliz
 import { applyRules, coveredCharRatio, RULES_VERSION } from './rules'
 
 /**
- * Разбор одного текста причины отказа детерминированными средствами.
+ * Parsing a single denial reason text with deterministic means.
  *
- * Чистая функция без обращений к БД и сети — так её можно прогонять по
- * фикстурам и видеть последствия правки правил до того, как они попадут
- * в данные.
+ * A pure function with no DB or network calls, so it can be run against
+ * fixtures to see the effect of a rule change before it hits real data.
  *
- * Порядок от дешёвого к дорогому: нормализация → правила по клаузам →
- * декодер правовых ссылок. В LLM уходит только непокрытый остаток,
- * а не весь текст: это и дешевле, и меньше поводов для галлюцинаций.
+ * Order goes from cheap to expensive: normalization → clause-level rules
+ * → legal reference decoder. Only the uncovered remainder goes to the
+ * LLM, not the whole text: cheaper, and fewer chances to hallucinate.
  */
 
 export type MatchMethod = 'rule' | 'legal_ref'
@@ -21,26 +20,26 @@ export type ReasonMatch = {
   slug: string
   method: MatchMethod
   ruleCode: string | null
-  /** Координаты в ИСХОДНОМ тексте — под подсветку доказательства. */
+  /** Coordinates in the ORIGINAL text, for highlighting the evidence. */
   start: number
   end: number
 }
 
 export type ReasonAnalysis = {
-  /** Нормализованный текст: ключ дедупликации и вход для похожести. */
+  /** Normalized text: dedup key and input for similarity. */
   normalizedText: string
   normSha256: string
-  /** Правовые ссылки как контекст: `art.65:III`, `art.221`. */
+  /** Legal references as context: `art.65:III`, `art.221`. */
   legalRefs: string[]
   matches: ReasonMatch[]
-  /** Доля содержательного текста, покрытая спанами. */
+  /** Share of the substantive text covered by spans. */
   coveredCharRatio: number
-  /** Непокрытые клаузы в исходном виде — вход для LLM. Пусто — LLM не нужен. */
+  /** Uncovered clauses verbatim, input for the LLM. Empty means the LLM isn't needed. */
   remainder: string
   rulesVersion: number
 }
 
-/** Маскирует цифровые серии: 282 текста из 355 отличаются только номерами. */
+/** Masks digit sequences: 282 of 355 texts differ only by numbers. */
 function maskDigits(value: string): string {
   return value.replace(/\d+/g, '#')
 }
@@ -65,8 +64,8 @@ export function analyzeReasonText(raw: string): ReasonAnalysis {
 
   for (const match of ruleMatches) {
     spans.push({ start: match.start, end: match.end })
-    // Одна причина на текст, даже если правило сработало несколько раз:
-    // связь в denial_reasons имеет ключ (denial_id, reason_id).
+    // One reason per text even if the rule matched multiple times: the
+    // link in denial_reasons is keyed on (denial_id, reason_id).
     if (seen.has(match.slug)) continue
     seen.add(match.slug)
     const rawSpan = toRawSpan(normalized, match.start, match.end)
@@ -87,12 +86,13 @@ export function analyzeReasonText(raw: string): ReasonAnalysis {
     })
   }
 
-  // Непокрытый остаток: клаузы, которых не коснулся ни один спан.
+  // Uncovered remainder: clauses that no span touched.
   const clauses = segmentClauses(normalized.text, contentStart)
   const uncovered = clauses.filter((clause) => !spans.some((span) => overlaps(span, clause)))
 
-  // Остаток отдаётся LLM в исходном виде, с диакритикой: нормализованный
-  // текст читается моделью хуже, а восстановить его она не обязана.
+  // The remainder is handed to the LLM verbatim, with diacritics: the
+  // normalized text is harder for the model to read, and it isn't
+  // obligated to reconstruct it.
   const remainder = uncovered
     .map((clause) => {
       const rawSpan = toRawSpan(normalized, clause.start, clause.end)

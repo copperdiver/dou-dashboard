@@ -15,21 +15,21 @@ import { pipelineConfig } from '../../lib/env'
 import type { Pump } from './types'
 
 /**
- * Канонизация текстов причин детерминированными средствами.
+ * Canonization of reason texts through deterministic means.
  *
- * Работает по УНИКАЛЬНЫМ текстам (`reason_texts`), а не по отказам:
- * замер даёт 203 уникальных текста на 267 отказов, и правила с LLM
- * должны видеть каждый текст один раз.
+ * Operates on UNIQUE texts (`reason_texts`), not on denials: measured
+ * at 203 unique texts for 267 denials, and rules plus the LLM should
+ * see each text exactly once.
  *
- * Правила и декодер правовых ссылок покрывают 94% текстов. Остаток
- * помечается `needs_review` и достаётся насосу enrich.
+ * Rules and the legal-reference decoder cover 94% of texts. The rest
+ * is flagged `needs_review` and picked up by the enrich pump.
  *
- * Ручные правки не затираются: тексты в состоянии `confirmed`/`corrected`
- * автоматика не берёт, а связи с `method='manual'` при перезаписи
- * сохраняются.
+ * Manual edits aren't overwritten: texts in `confirmed`/`corrected`
+ * state aren't touched by automation, and links with `method='manual'`
+ * survive a rewrite.
  */
 
-/** Сколько отказов чинить за прогон. */
+/** How many denials to repair per run. */
 const BACKFILL_BATCH = 500
 
 type Claim = {
@@ -38,23 +38,24 @@ type Claim = {
 }
 
 /**
- * Достраивает связи отказов с причинами там, где текст уже разобран,
- * а отказ остался без строк в `denial_reasons`.
+ * Fills in denial-to-reason links where the text is already parsed but
+ * the denial is still missing rows in `denial_reasons`.
  *
- * Так получается штатно: текст берётся в работу один раз на версию правил
- * (см. `claimTexts`), и `syncDenialReasons` раскладывает причины только
- * в этот момент. Отказ, разобранный ПОЗЖЕ своей причины, ссылается на уже
- * обработанный текст, повторно тот не претендуется — и связи не появляются
- * никогда. На замере так осталось 850 отказов: причины у них определены,
- * но ни в карточку, ни в категории они не попадали.
+ * This happens by design: a text is claimed for processing once per
+ * rules version (see `claimTexts`), and `syncDenialReasons` only lays
+ * down reasons at that moment. A denial parsed AFTER its reason text
+ * references an already-processed text, which never gets claimed
+ * again. So the links never appear. Measured at 850 denials left this
+ * way: their reasons were determined, but they never made it into the
+ * card or the categories.
  *
- * Проход идемпотентен и дешёв, поэтому выполняется на каждом прогоне: это
- * не разовая починка, а страховка от той же гонки в будущем.
+ * This pass is idempotent and cheap, so it runs on every run: it's not
+ * a one-off fix, it's insurance against the same race happening again.
  *
- * Отказы, у текста которых не нашлось ни одной причины, сюда не попадают —
- * их не «чинить» надо, а классифицировать, и это работа насоса enrich.
- * Без этого условия они возвращались бы в выборку каждый прогон и мешали
- * дойти до чинимых.
+ * Denials whose text matched no reason at all don't land here: they
+ * don't need "repairing," they need classifying, and that's the enrich
+ * pump's job. Without this condition they'd come back into the query
+ * every run and get in the way of reaching the ones that actually need repair.
  */
 async function backfillDenialReasons(limit: number): Promise<{ links: number; days: string[] }> {
   const { rows } = await db.execute<{ edition_date: string }>(sql`
@@ -112,9 +113,9 @@ export const canonizeReasons: Pump = async ({ log }) => {
   const { fetchBatch } = pipelineConfig()
   const claims = await claimTexts(fetchBatch * 5)
 
-  // Восстанавливающий проход идёт ДО досрочного выхода: когда все тексты
-  // разобраны, новых претензий нет, и внутри условия ниже он не запустился
-  // бы ни разу — а чинить надо именно в этом состоянии.
+  // The repair pass runs BEFORE the early return: once all texts are
+  // parsed, there are no new claims, and inside the condition below it
+  // would never run. But that's exactly the state where repairs are needed.
   const repaired = await backfillDenialReasons(BACKFILL_BATCH)
   if (repaired.days.length > 0) await markDirty(repaired.days)
 
@@ -125,7 +126,7 @@ export const canonizeReasons: Pump = async ({ log }) => {
     }
   }
 
-  // Справочники читаются один раз на прогон.
+  // Lookup tables are read once per run.
   const [reasonRows, categoryRows] = await Promise.all([
     db.select({ id: reasons.id, slug: reasons.slug, categoryId: reasons.categoryId }).from(reasons),
     db.select({ id: reasonCategories.id, code: reasonCategories.code }).from(reasonCategories),
@@ -145,9 +146,9 @@ export const canonizeReasons: Pump = async ({ log }) => {
     ratioSum += analysis.coveredCharRatio
 
     await db.transaction(async (tx) => {
-      // Снимаем только автоматические связи прошлой версии правил.
-      // Ручные связи неприкосновенны — иначе улучшение правил стирало бы
-      // работу человека.
+      // Only automatic links from the previous rules version are removed.
+      // Manual links are untouchable: otherwise improving the rules
+      // would erase a human's work.
       await tx
         .delete(reasonTextReasons)
         .where(
@@ -163,8 +164,8 @@ export const canonizeReasons: Pump = async ({ log }) => {
       for (const match of analysis.matches) {
         const reason = reasonBySlug.get(match.slug)
         if (!reason) {
-          // Правило ссылается на slug, которого нет в справочнике:
-          // рассинхрон кода и сидов. Молча пропускать нельзя.
+          // A rule references a slug that isn't in the lookup table:
+          // code and seed data are out of sync. Can't silently skip this.
           unknownSlugs += 1
           continue
         }
@@ -190,14 +191,14 @@ export const canonizeReasons: Pump = async ({ log }) => {
               spanEnd: sql`excluded.span_end`,
               rulesVersion: sql`excluded.rules_version`,
             },
-            // Ручную связь не перезаписываем.
+            // Don't overwrite a manual link.
             setWhere: sql`${reasonTextReasons.method} <> 'manual'`,
           })
 
         matched.push({ reasonId: reason.id, categoryId: reason.categoryId })
       }
 
-      // Остаток есть и ничего не найдено — задача для LLM.
+      // There's a remainder and nothing matched: a job for the LLM.
       const review = matched.length === 0 && analysis.remainder.length > 0
 
       await tx
@@ -220,9 +221,9 @@ export const canonizeReasons: Pump = async ({ log }) => {
   }
 
   log(
-    `текстов ${claims.length}, разобрано правилами ${resolved}, в LLM ${needsReview}, ` +
-      `связей ${links}, достроено связей ${repaired.links}, ` +
-      `средняя доля покрытия ${(ratioSum / claims.length).toFixed(3)}`,
+    `texts ${claims.length}, resolved by rules ${resolved}, sent to LLM ${needsReview}, ` +
+      `links ${links}, backfilled links ${repaired.links}, ` +
+      `average coverage ratio ${(ratioSum / claims.length).toFixed(3)}`,
   )
 
   return {
@@ -240,7 +241,7 @@ export const canonizeReasons: Pump = async ({ log }) => {
   }
 }
 
-/** Дни на пересчёт витрин. */
+/** Days to recompute dashboards for. */
 async function markDirty(days: string[]): Promise<void> {
   await db
     .insert(dirtyDays)
@@ -252,13 +253,13 @@ async function markDirty(days: string[]): Promise<void> {
 }
 
 /**
- * Перекладывает связи текста на все отказы с этим текстом.
+ * Propagates a text's links to every denial that has that text.
  *
- * `denial_reasons` — плоская таблица с протащенными `category_id`
- * и `edition_date`: без них дрилл-даун «категория × день» требовал бы
- * join через три таблицы на каждую точку графика.
+ * `denial_reasons` is a flat table with `category_id` and `edition_date`
+ * carried along: without them, a "category × day" drill-down would need
+ * a three-table join for every point on the chart.
  *
- * Затронутые дни помечаются в `dirty_days` — витрины пересчитает rollup.
+ * Affected days are flagged in `dirty_days`. Rollup will recompute the dashboards.
  */
 export async function syncDenialReasons(
   tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
@@ -292,7 +293,7 @@ export async function syncDenialReasons(
     await tx.insert(denialReasons).values(values).onConflictDoNothing()
   }
 
-  // Дни затронутых отказов — на пересчёт витрин.
+  // Days of affected denials go on the dashboard recompute list.
   const days = [...new Set(affected.map((d) => d.editionDate))]
   await tx
     .insert(dirtyDays)

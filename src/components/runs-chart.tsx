@@ -7,9 +7,9 @@ import type { DailyRuns } from '@/lib/stats'
 import { formatDayShort, formatNumber } from '@/lib/format'
 
 /*
- * Подписи приходят пропсом, а не через словарь целиком: компонент
- * клиентский, и всё, что он получает, уезжает в браузер. Нужны только
- * эти ключи — остального в полезной нагрузке быть не должно.
+ * Labels arrive as a prop rather than the whole dictionary: the component
+ * is a client component, and everything it receives ships to the browser.
+ * Only these keys are needed: nothing else should be in the payload.
  */
 type ChartLabels = Pick<
   Dictionary['jobs'],
@@ -17,11 +17,11 @@ type ChartLabels = Pick<
 > &
   Pick<Dictionary['common'], 'showTable' | 'total'>
 
-/** Подписи легенды — та же пара серий, что и в подсказке. */
+/** Legend labels, the same pair of series as in the tooltip. */
 type LegendLabels = Pick<Dictionary['jobs'], 'success' | 'failure'>
 
-// Единицы viewBox подобраны так, чтобы на десктопе они совпадали с CSS-пикселями:
-// иначе масштабирование раздувает толщину столбцов и размер подписей.
+// viewBox units are chosen to match CSS pixels on desktop:
+// otherwise scaling would inflate the bar thickness and label size.
 const W = 1000
 const H = 330
 const PAD = { top: 20, right: 16, bottom: 40, left: 52 }
@@ -29,14 +29,14 @@ const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 const BASELINE_Y = PAD.top + PLOT_H
 
-const MAX_BAR = 24 // толщина столбца сверху ограничена
-const SEGMENT_GAP = 2 // разрыв цветом поверхности между сегментами стека
-const CORNER = 4 // скругление верхнего конца стека
-const MIN_SEGMENT = 2 // чтобы единичный запуск был виден
+const MAX_BAR = 24 // bar thickness is capped
+const SEGMENT_GAP = 2 // surface-colored gap between stacked segments
+const CORNER = 4 // rounding on the stack's top end
+const MIN_SEGMENT = 2 // so a single run stays visible
 
 /**
- * Подписи оси Y: «красивый» шаг с 3–5 интервалами и минимальным запасом
- * сверху — иначе шкала до 1500 при максимуме 1119 съедает четверть высоты.
+ * Y-axis labels: a "nice" step with 3-5 intervals and minimal headroom.
+ * Otherwise a scale going to 1500 with a max of 1119 eats a quarter of the height.
  */
 function niceTicks(max: number): number[] {
   if (max <= 0) return [0, 1]
@@ -64,7 +64,7 @@ function niceTicks(max: number): number[] {
   return ticks
 }
 
-/** Прямоугольник со скруглённым верхом и прямым основанием. */
+/** A rectangle with a rounded top and a flat base. */
 function topRoundedPath(x: number, y: number, width: number, height: number, radius: number) {
   const r = Math.max(0, Math.min(radius, width / 2, height))
   return [
@@ -81,7 +81,7 @@ function topRoundedPath(x: number, y: number, width: number, height: number, rad
 export function RunsChart({
   locale,
   data,
-  /** Уже согласованное «14 дней»: формы числительных считает сервер. */
+  /** Already-agreed "14 days": the server handles plural forms. */
   dayCount,
   labels,
 }: {
@@ -141,7 +141,7 @@ export function RunsChart({
         aria-label={interpolate(labels.dailyChartAlt, { days: dayCount })}
         onMouseLeave={() => setActive(null)}
       >
-        {/* сетка и подписи оси Y */}
+        {/* grid and Y-axis labels */}
         {ticks.map((tick) => {
           const y = BASELINE_Y - toPx(tick)
           return (
@@ -166,7 +166,7 @@ export function RunsChart({
           )
         })}
 
-        {/* подсветка активного дня */}
+        {/* active day highlight */}
         {activeBar && (
           <rect
             x={activeBar.centerX - band / 2}
@@ -178,7 +178,7 @@ export function RunsChart({
           />
         )}
 
-        {/* столбцы; наведённый слегка светлеет — реакция на курсор */}
+        {/* bars; the hovered one lightens slightly for cursor feedback */}
         {bars.map((bar) => (
           <g key={bar.day} filter={active === bar.index ? 'brightness(1.12)' : undefined}>
             {bar.successH > 0 && (
@@ -200,7 +200,7 @@ export function RunsChart({
           </g>
         ))}
 
-        {/* прямая подпись — только пиковый день */}
+        {/* direct label, peak day only */}
         {grandTotal > 0 && bars[peakIndex] && (
           <text
             x={bars[peakIndex].centerX}
@@ -212,7 +212,7 @@ export function RunsChart({
           </text>
         )}
 
-        {/* подписи оси X — через день, последний день подписан всегда */}
+        {/* X-axis labels, every other day; the last day is always labeled */}
         {bars.map((bar) =>
           (data.length - 1 - bar.index) % 2 === 0 ? (
             <text
@@ -227,7 +227,7 @@ export function RunsChart({
           ) : null,
         )}
 
-        {/* зоны наведения — шире столбца, чтобы попадать мышью легко */}
+        {/* hover zones, wider than the bar, so the mouse can hit them easily */}
         {bars.map((bar) => (
           <rect
             key={`hit-${bar.day}`}
@@ -251,9 +251,9 @@ export function RunsChart({
 
       {activeBar && (
         /*
-         * Подсказка стоит сбоку от столбца, а не над ним: столбцы заполняют
-         * всю высоту области, и центрированная подсказка закрывала бы как раз
-         * тот столбец, про который рассказывает. У правого края — зеркалим.
+         * The tooltip sits beside the bar, not above it: bars fill the whole
+         * height of the plot area, and a centered tooltip would cover
+         * exactly the bar it's describing. Near the right edge, we mirror it.
          */
         <div
           className="pointer-events-none absolute z-10 w-max rounded-lg border border-hairline bg-surface px-3 py-2 text-xs shadow-sm"
@@ -266,8 +266,8 @@ export function RunsChart({
           }}
         >
           <div className="text-ink-secondary">{activeBar.label}</div>
-          {/* Значение — главное, имя серии второстепенно. Ключ серии —
-              короткий штрих её цветом, а не заливка. */}
+          {/* The value is primary, the series name secondary. The series key
+              is a short tick in its color, not a fill. */}
           <dl className="mt-1 space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="h-0.5 w-3 shrink-0 rounded-full bg-series-1" aria-hidden="true" />
@@ -330,7 +330,7 @@ export function RunsChart({
   )
 }
 
-/** Легенда повторяет форму марки: для столбцов — прямоугольник. */
+/** The legend echoes the marker's shape: a rectangle for bars. */
 export function RunsChartLegend({ labels }: { labels: LegendLabels }) {
   return (
     <div className="flex items-center gap-4 text-xs text-ink-secondary">

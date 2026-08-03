@@ -54,8 +54,8 @@ export default async function ApprovalsPage({
             name: 'country',
             label: d.filters.country,
             value: search.country ?? '',
-            // Без флага: в нативный `<option>` разметку вставить нельзя,
-            // а нативный список на телефоне ценнее флажка в строке.
+            // No flag: markup can't go inside a native `<option>`,
+            // and a native picker on mobile is worth more than a flag in the row.
             options: countries.map((c) => ({
               value: c.iso2,
               label: `${name(c.nameRu, c.nameEn)} · ${c.approvals}`,

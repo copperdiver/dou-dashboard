@@ -8,13 +8,14 @@ import type { Locale } from '@/i18n/config'
 import { NAV_COOKIE, writeUiCookie } from '@/lib/ui-state'
 
 /**
- * Знак студии. Два файла вместо одного: на белом золото теряется, на
- * тёмном теряется серый. Оба варианта в разметке, лишний скрыт стилями —
- * так переключение темы не требует ни JS, ни повторного запроса.
+ * Studio mark. Two files instead of one: gold gets lost on white, gray
+ * gets lost on dark. Both variants are in the markup, the unused one
+ * hidden by CSS: this way the theme switch needs neither JS nor a refetch.
  */
 function StudioMark({ size }: { size: number }) {
-  // alt задан на каждом теге, а не разложен из объекта: правило доступности
-  // его через спред не видит, а отключать правило ради краткости не стоит.
+  // alt is set on each tag rather than spread from an object: the a11y
+  // lint rule doesn't see it through a spread, and disabling the rule
+  // for brevity isn't worth it.
   return (
     <>
       <Image
@@ -35,7 +36,7 @@ function StudioMark({ size }: { size: number }) {
   )
 }
 
-/** Раздел навигации. `href` — путь внутри локали, пустой у корневого. */
+/** A navigation section. `href` is a path within the locale, empty for the root one. */
 export type NavItem = {
   href: string
   label: string
@@ -45,8 +46,8 @@ export type NavItem = {
 type IconName = 'overview' | 'approvals' | 'denials' | 'articles' | 'health'
 
 /*
- * Иконки инлайном: пять штук на приложение не стоят зависимости, а
- * currentColor даёт им тему и активное состояние бесплатно.
+ * Icons are inlined: five of them per app aren't worth a dependency, and
+ * currentColor gives them theming and active state for free.
  */
 const ICONS: Record<IconName, React.ReactNode> = {
   overview: <path d="M3 13h6v8H3zM9 3h6v18H9zM15 9h6v12h-6z" />,
@@ -73,12 +74,13 @@ function Icon({ name }: { name: IconName }) {
   )
 }
 
-/* ── Состояние «свёрнуто» ──────────────────────────────────────────────── */
+/* ── "Collapsed" state ─────────────────────────────────────────────────── */
 
 /*
- * Ширину задаёт CSS-переменная на <html>, поэтому и состояние живёт там же:
- * иначе отступ содержимого пришлось бы синхронизировать отдельно. Атрибут
- * ставит сервер по cookie — см. src/lib/ui-state.ts, почему не localStorage.
+ * The width is set by a CSS variable on <html>, so the state lives there
+ * too: otherwise the content padding would have to be synced separately.
+ * The server sets the attribute from a cookie (see src/lib/ui-state.ts
+ * for why not localStorage).
  */
 const listeners = new Set<() => void>()
 
@@ -108,25 +110,25 @@ function setCollapsed(next: boolean): void {
   for (const listener of listeners) listener()
 }
 
-/* ── Навигация ─────────────────────────────────────────────────────────── */
+/* ── Navigation ────────────────────────────────────────────────────────── */
 
 export type NavLabels = {
-  /** Доступное имя всей навигации. */
+  /** Accessible name for the whole navigation. */
   title: string
   collapse: string
   expand: string
 }
 
 /**
- * Навигация. Клиентский компонент только ради подсветки активного раздела
- * и состояния «свёрнуто» — сами ссылки обычные и работают без JS.
+ * Navigation. A client component only for highlighting the active section
+ * and the "collapsed" state; the links themselves are plain and work without JS.
  *
- * На мобильном это закреплённая снизу панель: большой палец достаёт до
- * низа экрана, а не до шапки. С `sm:` она превращается в боковое меню
- * у левого края, которое сворачивается в одни иконки.
+ * On mobile it's a panel fixed to the bottom: the thumb reaches the bottom
+ * of the screen, not the header. With `sm:` it turns into a sidebar at the
+ * left edge, which collapses down to icons only.
  *
- * Список разделов приходит извне: перечислять их здесь значило бы вести
- * ссылки на страницы, которых ещё нет.
+ * The list of sections comes from outside: hardcoding it here would mean
+ * keeping links to pages that don't exist yet.
  */
 export function SiteNav({
   locale,
@@ -140,7 +142,7 @@ export function SiteNav({
   const pathname = usePathname()
   const collapsed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
-  // Один раздел — показывать «переключатель» из одной вкладки нечестно.
+  // A single section: showing a "switcher" with one tab would be dishonest.
   if (items.length < 2) return null
 
   return (
@@ -149,13 +151,13 @@ export function SiteNav({
       className={
         'fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-surface ' +
         'pb-[env(safe-area-inset-bottom,0px)] ' +
-        // На десктопе — колонка во всю высоту у самого края экрана.
+        // On desktop: a full-height column at the very edge of the screen.
         'sm:inset-x-auto sm:top-0 sm:left-0 sm:h-dvh sm:w-[var(--nav-w)] ' +
         'sm:flex sm:flex-col sm:border-t-0 sm:border-r sm:pb-0'
       }
     >
-      {/* Кнопка сворачивания — наверху панели и только на десктопе:
-          снизу на телефоне панель и так состоит из одних иконок. */}
+      {/* Collapse button, at the top of the panel, desktop only:
+          on mobile the panel is already icons-only. */}
       <div
         className={
           'hidden sm:flex sm:h-12 sm:shrink-0 sm:items-center sm:border-b sm:border-hairline sm:px-2 ' +
@@ -179,7 +181,7 @@ export function SiteNav({
             className="size-5"
             aria-hidden="true"
           >
-            {/* Панель со стрелкой: направление показывает, куда уедет меню. */}
+            {/* Panel with an arrow: the direction shows which way the menu will move. */}
             <path d="M4 5h16v14H4zM10 5v14" />
             <path d={collapsed ? 'M14 10l2 2-2 2' : 'M17 10l-2 2 2 2'} />
           </svg>
@@ -198,13 +200,13 @@ export function SiteNav({
           const active = item.href === '' ? pathname === href : pathname.startsWith(href)
 
           return (
-            // min-w-0 обязателен: у flex-элемента min-width по умолчанию
-            // auto, поэтому длинная подпись не даёт вкладке сжаться и
-            // распирает панель за пределы экрана.
+            // min-w-0 is required: a flex item's min-width defaults to
+            // auto, so a long label keeps the tab from shrinking and
+            // blows the panel out past the screen edge.
             //
-            // «Состояние» на телефоне скрыто: раздел служебный, а пятое
-            // место в нижней панели занимает знак студии. На десктопе
-            // раздел остаётся в боковом меню.
+            // The "status" section is hidden on mobile: it's a utility
+            // section, and the fifth spot in the bottom bar is taken by
+            // the studio mark. On desktop it stays in the sidebar.
             <li
               key={href}
               className={
@@ -215,10 +217,10 @@ export function SiteNav({
               <Link
                 href={href}
                 aria-current={active ? 'page' : undefined}
-                // Подсказка нужна только свёрнутому меню: там подпись скрыта.
+                // The tooltip is only needed for the collapsed menu: the label is hidden there.
                 title={collapsed ? item.label : undefined}
                 className={
-                  // 56px по высоте — минимальная комфортная цель для пальца.
+                  // 56px tall: the minimum comfortable touch target.
                   'flex h-14 flex-col items-center justify-center gap-1 text-[11px] ' +
                   'sm:h-9 sm:flex-row sm:gap-2.5 sm:rounded-lg sm:px-2.5 sm:text-xs ' +
                   (collapsed ? 'sm:justify-center' : 'sm:justify-start') +
@@ -241,8 +243,8 @@ export function SiteNav({
           )
         })}
 
-        {/* Знак студии на месте пятой вкладки — только на телефоне:
-            на десктопе он стоит внизу боковой панели. */}
+        {/* Studio mark in the fifth tab slot, mobile only:
+            on desktop it sits at the bottom of the sidebar. */}
         <li className="min-w-0 flex-1 sm:hidden">
           <a
             href="https://copperdiver.studio/"
@@ -257,9 +259,9 @@ export function SiteNav({
       </ul>
 
       {/*
-        Подпись студии — внизу боковой панели и только на десктопе: в нижней
-        панели на телефоне места нет, там ссылка остаётся в подвале страницы.
-        Свёрнутое меню показывает один знак, подпись уходит в подсказку.
+        Studio label, at the bottom of the sidebar, desktop only: there's no
+        room for it in the mobile bottom bar, so the link stays in the page footer there.
+        The collapsed menu shows just the mark, the label moves into the tooltip.
       */}
       <a
         href="https://copperdiver.studio/"

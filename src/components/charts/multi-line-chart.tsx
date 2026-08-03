@@ -6,15 +6,15 @@ import { formatDayShort, formatEditionDate, formatNumber } from '@/lib/format'
 import { niceTicks, smoothPath } from './scale'
 
 /**
- * Несколько рядов на одном поле — категории причин отказа во времени.
+ * Multiple series on one plot: denial reason categories over time.
  *
- * Цвет каждой линии закреплён за категорией (`color_slot`), а не выдан по
- * порядку: включение и выключение категорий не должно перекрашивать
- * оставшиеся, иначе график невозможно сравнивать с самим собой.
+ * Each line's color is tied to its category (`color_slot`), not assigned
+ * by order: toggling categories on and off must not repaint the remaining
+ * ones, otherwise the chart couldn't be compared against itself over time.
  *
- * Значения активного дня выведены списком над полем, а не всплывающей
- * подсказкой: восемь линий дают восемь чисел, и на телефоне подсказка
- * такого размера закрыла бы весь график.
+ * The active day's values are listed above the plot rather than in a
+ * tooltip: eight lines give eight numbers, and on mobile a tooltip that
+ * size would cover the whole chart.
  */
 
 export type LineSeries = {
@@ -71,9 +71,9 @@ export function MultiLineChart({
   }
 
   const hasGap = series.some((s) => s.values.some((v) => v === null))
-  // Без наведения показываем последний день, про который что-то известно:
-  // диапазон кончается сегодняшним числом, а его данных ещё нет, и
-  // читатель встречал бы прочерки вместо значений.
+  // Without a hover, we show the last day we know something about: the
+  // range ends on today's date, whose data isn't in yet, and the reader
+  // would otherwise see dashes instead of values.
   const shown = active !== null && days[active] ? active : lastKnownIndex(series, days.length)
 
   return (
@@ -124,9 +124,9 @@ export function MultiLineChart({
       </p>
 
       {/*
-        Таблица — не «дополнительно», а обязательная замена цвету: три слота
-        палитры в светлой теме не проходят контраст 3:1 к поверхности, и
-        график в одиночку носителем данных быть не может.
+        The table isn't an "extra"; it's a mandatory substitute for color: three
+        palette slots fail 3:1 contrast against the surface in the light theme, and
+        the chart alone cannot be the sole carrier of the data.
       */}
       <details className="mt-3 text-xs text-ink-secondary">
         <summary className="cursor-pointer select-none hover:text-ink">{showTableLabel}</summary>
@@ -248,9 +248,9 @@ function Plot({
             key={day}
             x={x(index)}
             y={baseline + 16}
-            // Крайние подписи прижимаются к своей стороне: подпись
-            // последнего дня стоит ровно на правой границе поля, и по
-            // центру половина её уходила бы за край кадра.
+            // Edge labels are pinned to their own side: the last day's label
+            // sits right on the plot's right boundary, and centered it would
+            // have half of it running off the edge of the frame.
             textAnchor={index === 0 ? 'start' : index === days.length - 1 ? 'end' : 'middle'}
             className="fill-ink-muted text-[10px] [font-variant-numeric:tabular-nums]"
           >
@@ -293,9 +293,9 @@ function Line({
   x: (index: number) => number
   y: (value: number) => number
 }) {
-  // Ноль равносилен пропуску: день без отказов этой категории — это день,
-  // когда решений такого вида не публиковали, а не провал до нуля.
-  // Точные значения остаются в таблице под графиком.
+  // Zero is treated the same as a missing point: a day with no denials in
+  // this category is a day when this kind of decision wasn't published,
+  // not a drop to zero. Exact values stay in the table below the chart.
   const points = values
     .map((value, index) => ({ index, value }))
     .filter((p): p is { index: number; value: number } => p.value !== null && p.value !== 0)

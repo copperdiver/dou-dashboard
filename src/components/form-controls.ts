@@ -1,15 +1,15 @@
 /**
- * Элементы форм: фильтры фидов и произвольный период.
+ * Form elements: feed filters and the custom date range.
  *
- * Всё живёт одной строкой, поэтому подписей над полями нет — их роль
- * играет само поле: у списка это первый пункт («Страна рождения»),
- * у поиска подсказка внутри. Доступное имя при этом не теряется: рядом
- * идёт скрытая подпись и `aria-label`, иначе поле осталось бы безымянным
- * для чтения с экрана.
+ * Everything lives on one line, so there are no labels above the fields:
+ * the field itself plays that role: for a select it's the first option
+ * ("Country of birth"), for search it's the placeholder inside. The
+ * accessible name isn't lost, though: a hidden label and `aria-label` sit
+ * alongside, otherwise the field would be nameless to a screen reader.
  *
- * Высота у всех контролов одна (36px) и задана явно: у `select`, `input`
- * и `button` разные внутренние отступы по умолчанию, и без общей высоты
- * строка «плывёт» на пару пикселей.
+ * All controls share one height (36px), set explicitly: `select`, `input`,
+ * and `button` all have different default internal padding, and without a
+ * shared height the row drifts by a couple of pixels.
  */
 
 const BASE =
@@ -17,16 +17,17 @@ const BASE =
   'focus:border-series-1 focus:ring-4 focus:ring-series-1/20 focus:outline-none'
 
 /**
- * Поле ввода. На узком экране во всю ширину, дальше забирает остаток
- * строки. `min-w-0` обязателен: без него flex-элемент не сжимается ниже
- * своего содержимого, и строка переносила бы хвост на вторую.
+ * Input field. Full width on a narrow screen, then takes up the rest of
+ * the row. `min-w-0` is required: without it a flex item won't shrink
+ * below its content's width, and the row would wrap its tail onto a
+ * second line.
  */
 export const CONTROL = `${BASE} w-full sm:w-auto sm:min-w-0 sm:flex-1`
 
-/** Нативный список: место справа под системную стрелку. */
+/** Native select: room on the right for the system arrow. */
 export const SELECT = `${BASE} w-full pr-9 sm:w-auto sm:min-w-44`
 
-/** Поле даты: ширина по содержимому, иначе браузер растягивает его на всю строку. */
+/** Date field: width fits its content, otherwise the browser stretches it to fill the row. */
 export const DATE = `${BASE} w-full sm:w-auto`
 
 export const BTN_PRIMARY =
@@ -39,18 +40,19 @@ export const BTN_OUTLINE =
   'bg-surface px-4 text-sm font-medium text-ink transition-colors hover:bg-page ' +
   'focus:ring-4 focus:ring-series-1/20 focus:outline-none'
 
-/** Обёртка формы: одна строка на широком экране, перенос на узком. */
+/** Form wrapper: one row on a wide screen, wraps on a narrow one. */
 export const FORM_ROW =
   'flex flex-wrap items-center gap-2 rounded-2xl border border-hairline bg-surface p-2.5'
 
 /*
- * Переключатель вместо флажка.
+ * Toggle switch instead of a checkbox.
  *
- * Нативный `input` остаётся на месте и лишь скрыт: он несёт состояние,
- * имя поля и отправляется формой, а также даёт фокус с клавиатуры и
- * объявление «переключатель, включён». Рисуется дорожка с бегунком —
- * бегунок двигает правило `peer-checked:[&>span]`, потому что обычный
- * `peer-*` требует соседства на одном уровне, а бегунок вложен в дорожку.
+ * The native `input` stays in place and is only visually hidden: it
+ * still carries the state and field name, submits with the form, and
+ * gives keyboard focus plus the "switch, on" announcement. A track with
+ * a knob is drawn on top. The knob is moved by the `peer-checked:[&>span]`
+ * rule, since a plain `peer-*` requires the target to be a sibling, and
+ * the knob is nested inside the track.
  */
 export const TOGGLE_INPUT = 'peer sr-only'
 

@@ -1,14 +1,14 @@
 import { INTL_LOCALES, type Locale } from '../i18n/config'
 
 /**
- * Форматирование чисел, дат и длительностей по локали.
+ * Formatting of numbers, dates, and durations by locale.
  *
- * Локаль передаётся параметром, а не берётся из окружения: страницы
- * рендерятся на сервере сразу для обеих локалей, и глобальное состояние
- * здесь давало бы утечку языка между запросами.
+ * Locale is passed as a parameter rather than read from the
+ * environment: pages are rendered on the server for both locales at
+ * once, and global state here would leak the language between requests.
  *
- * Форматтеры кешируются: `new Intl.NumberFormat` на каждый вызов заметно
- * дороже, а на фиде их тысячи.
+ * Formatters are cached: `new Intl.NumberFormat` on every call is
+ * noticeably expensive, and the feed makes thousands of calls.
  */
 
 const numberFormats = new Map<string, Intl.NumberFormat>()
@@ -38,7 +38,7 @@ export function formatNumber(locale: Locale, value: number): string {
   return numberFormat(locale).format(value)
 }
 
-/** 1284 → «1 284», 12 900 → «12,9 тыс.». Компактная запись — из Intl. */
+/** 1284 → "1,284", 12,900 → "12.9K". Compact notation comes from Intl. */
 export function formatCompact(locale: Locale, value: number): string {
   if (Math.abs(value) < 10_000) return formatNumber(locale, value)
   return numberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value)
@@ -80,10 +80,10 @@ export function formatDuration(locale: Locale, ms: number | null): string {
 }
 
 /**
- * Дата выпуска DOU. Приходит строкой `YYYY-MM-DD` и остаётся датой без
- * времени: часовой пояс к ней применять нельзя — сутки уехали бы.
- * Отсюда `timeZone: 'UTC'`, иначе в отрицательных смещениях дата
- * сдвинулась бы на день назад.
+ * DOU edition date. Comes in as a `YYYY-MM-DD` string and stays a date
+ * with no time: applying a time zone to it would shift the day.
+ * Hence `timeZone: 'UTC'`: otherwise, in negative offsets, the date
+ * would shift back a day.
  */
 export function formatEditionDate(locale: Locale, day: string | null): string {
   if (!day) return '—'
@@ -97,14 +97,14 @@ export function formatEditionDate(locale: Locale, day: string | null): string {
   }).format(date)
 }
 
-/** Короткая подпись оси: «29.07» / «Jul 29». */
+/** Short axis label: "29.07" / "Jul 29". */
 export function formatDayShort(locale: Locale, day: string): string {
   const date = new Date(`${day}T00:00:00Z`)
   if (Number.isNaN(date.getTime())) return day
   return dateFormat(locale, { day: '2-digit', month: 'short', timeZone: 'UTC' }).format(date)
 }
 
-/** Момент времени (например, запуск задачи) — уже с часовым поясом. */
+/** A point in time (e.g. a job run), already with a time zone. */
 export function formatDateTime(locale: Locale, value: Date | string | null): string {
   if (!value) return '—'
   const date = typeof value === 'string' ? new Date(value) : value
@@ -117,7 +117,7 @@ export function formatDateTime(locale: Locale, value: Date | string | null): str
   }).format(date)
 }
 
-/** Относительное изменение к предыдущему периоду. null — сравнивать не с чем. */
+/** Relative change vs. the previous period. null means nothing to compare against. */
 export function relativeChange(current: number | null, previous: number | null): number | null {
   if (current === null || previous === null || previous === 0) return null
   return (current - previous) / previous

@@ -1,4 +1,4 @@
-/** Мелочи, общие для всех фидов. */
+/** Small bits shared across all feeds. */
 
 export function SourceLink({ url, label }: { url: string; label: string }) {
   return (
@@ -23,9 +23,9 @@ export function Empty({ title, hint }: { title: string; hint: string }) {
 }
 
 /**
- * Пометка на записи об отказе: подтверждение прежнего решения, повторная
- * публикация, прекращение. Нужна, чтобы читатель не принял подтверждение
- * при обжаловании за новый отказ — в счётчиках они и не смешиваются.
+ * Mark on a denial record: upholding a prior decision, republication, or
+ * termination. Needed so a reader doesn't mistake an upheld appeal for a
+ * new denial; they aren't mixed together in the counters either.
  */
 export function DecisionBadge({ label, slot }: { label: string; slot: number }) {
   return (

@@ -2,17 +2,19 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { DEFAULT_LOCALE, isLocale, LOCALES, type Locale } from '@/i18n/config'
 
 /**
- * Приводит адрес к виду `/<локаль>/…`.
+ * Rewrites the path to `/<locale>/…`.
  *
- * Локаль живёт в пути, а не в cookie: адрес страницы тогда однозначен и
- * делится ссылкой вместе с языком. Без локали в первом сегменте —
- * редирект, чтобы у страницы не было двух адресов с одним содержимым.
+ * The locale lives in the path, not a cookie: that way a page's address is
+ * unambiguous and shareable together with its language. If the first
+ * segment isn't a locale, redirect: otherwise the same page would have
+ * two different addresses for the same content.
  */
 export const config = {
   /*
-   * Мимо прокси: внутренние маршруты Next, API и всё, в чём есть точка
-   * (файлы из public — favicon, robots.txt, картинки). Иначе запрос
-   * статики уехал бы на /ru/favicon.ico.
+   * Skip the proxy for: Next's internal routes, the API, and anything
+   * with a dot in it (files under public, like favicon, robots.txt, images).
+   * Otherwise a static-asset request would end up rewritten to
+   * /ru/favicon.ico.
    */
   matcher: ['/((?!_next/|api/|.*\\.).*)'],
 }
@@ -25,16 +27,16 @@ export function proxy(request: NextRequest) {
 
   const url = request.nextUrl.clone()
   const locale = preferredLocale(request.headers.get('accept-language'))
-  // pathname всегда начинается со слэша, а для корня он и есть «/».
+  // pathname always starts with a slash, and for the root it's just "/".
   url.pathname = pathname === '/' ? `/${locale}` : `/${locale}${pathname}`
 
   return NextResponse.redirect(url)
 }
 
 /**
- * Язык из Accept-Language с учётом весов q. Сравнение по базовому тегу:
- * `en-GB` и `en-US` для нас одинаково `en`. Ничего не подошло — русский,
- * потому что аудитория дашборда русскоязычная.
+ * Language from Accept-Language, honoring q weights. Compared by base tag:
+ * `en-GB` and `en-US` are both just `en` to us. If nothing matches, fall
+ * back to Russian, since the dashboard's audience is Russian-speaking.
  */
 function preferredLocale(header: string | null): Locale {
   if (!header) return DEFAULT_LOCALE
@@ -54,7 +56,7 @@ function preferredLocale(header: string | null): Locale {
         weight: Number.isFinite(weight) ? weight : 0,
       }
     })
-    // Вес 0 означает «этот язык не годится» — такие варианты отбрасываем.
+    // A weight of 0 means "this language won't do", so drop those entries.
     .filter((entry) => entry.weight > 0)
     .sort((a, b) => b.weight - a.weight)
 

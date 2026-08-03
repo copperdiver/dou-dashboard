@@ -1,13 +1,13 @@
 /**
- * Прогоняет канонизатор причин по реальным текстам из БД и печатает,
- * что покрыли правила и что осталось для LLM.
+ * Runs the reason canonizer over real texts from the DB and prints what
+ * the rules covered and what's left for the LLM.
  *
  *   npx tsx --env-file-if-exists=.env scripts/reasons-report.ts
  *   npx tsx --env-file-if-exists=.env scripts/reasons-report.ts --show-remainder
  *
- * Ничего не пишет. Нужно, чтобы правки правил были видны до того, как
- * попадут в данные, и чтобы отследить падение покрытия при смене
- * формулировок в источнике.
+ * Writes nothing. Needed to see the effect of rule changes before they
+ * hit the data, and to catch coverage drops when the source's wording
+ * changes.
  */
 import { isNotNull } from 'drizzle-orm'
 import { closePool, db } from '../src/db/client'
@@ -19,8 +19,8 @@ import { RULE_CODES } from '../src/lib/reasons/rules'
 const showRemainder = process.argv.includes('--show-remainder')
 
 try {
-  // Берём тексты из разобранных актов, а не из denials: текст причины
-  // хранится в reason_texts, которые ещё не заполнены.
+  // Pull texts from parsed acts rather than denials: reason text lives
+  // in reason_texts, which isn't populated yet.
   const rows = await db
     .select({ paragraphs: acts.paragraphs, kind: acts.actKind })
     .from(acts)
@@ -35,7 +35,7 @@ try {
   }
 
   if (texts.length === 0) {
-    console.log('Текстов причин в БД нет — сначала загрузите и разберите страницы.')
+    console.log('No reason texts in the DB. Fetch and parse pages first.')
   } else {
     const bySlug = new Map<string, number>()
     const byMethod = new Map<string, number>()
@@ -60,22 +60,22 @@ try {
         byMethod.set(m.method, (byMethod.get(m.method) ?? 0) + 1)
       }
       if (analysis.remainder.length > 0 && slugs.size > 0) {
-        // Частично покрытые тоже интересны: остаток пойдёт в LLM.
+        // Partially covered ones matter too: the remainder goes to the LLM.
         remainders.push(analysis.remainder)
       }
     }
 
     const total = texts.length
-    console.log(`текстов: ${total}, уникальных после нормализации: ${unique.size}`)
+    console.log(`texts: ${total}, unique after normalization: ${unique.size}`)
     console.log(
-      `покрыто хотя бы одной причиной: ${covered} (${((100 * covered) / total).toFixed(0)}%) → ` +
-        `в LLM: ${total - covered} (${((100 * (total - covered)) / total).toFixed(0)}%)`,
+      `covered by at least one reason: ${covered} (${((100 * covered) / total).toFixed(0)}%) → ` +
+        `to LLM: ${total - covered} (${((100 * (total - covered)) / total).toFixed(0)}%)`,
     )
-    console.log(`средняя доля покрытого текста: ${(ratioSum / total).toFixed(3)}`)
+    console.log(`average share of covered text: ${(ratioSum / total).toFixed(3)}`)
 
-    console.log('\nпо способу определения:', Object.fromEntries(byMethod))
+    console.log('\nby detection method:', Object.fromEntries(byMethod))
 
-    console.log('\nчастоты атомарных причин:')
+    console.log('\natomic reason frequencies:')
     for (const [slug, count] of [...bySlug.entries()].sort((a, b) => b[1] - a[1])) {
       const rule = RULE_CODES.find((r) => r.slug === slug)
       console.log(
@@ -84,17 +84,17 @@ try {
     }
 
     console.log(
-      '\nпричин в одном тексте:',
+      '\nreasons per text:',
       Object.fromEntries([...perTextCounts.entries()].sort((a, b) => a[0] - b[0])),
     )
 
     if (showRemainder) {
-      console.log(`\nостатки для LLM (${remainders.length}), первые 12:`)
+      console.log(`\nremainders for LLM (${remainders.length}), first 12:`)
       for (const r of remainders.slice(0, 12)) console.log(`  • ${r.slice(0, 200)}`)
     }
   }
 } catch (error) {
-  console.error('Ошибка:', error)
+  console.error('Error:', error)
   process.exitCode = 1
 } finally {
   await closePool()

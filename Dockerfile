@@ -1,5 +1,5 @@
-# Next.js (сервис web). Многостадийная сборка: в финальный слой
-# попадает только .next/standalone.
+# Next.js (web service). Multi-stage build: only .next/standalone
+# ends up in the final layer.
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./

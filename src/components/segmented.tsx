@@ -1,10 +1,10 @@
 /**
- * Общий вид сегментных переключателей в шапке — язык и тема.
+ * Shared look for the segmented toggles in the header: language and theme.
  *
- * Выбранный сегмент помечен не только заливкой: у него `aria-current`
- * либо `aria-pressed`, поэтому состояние доступно и без цвета. Заливка
- * контрастная (чернила на странице), а не оттенок серии: это элемент
- * управления, и путать его с цветом данных нельзя.
+ * The selected segment isn't marked by fill alone: it also carries
+ * `aria-current` or `aria-pressed`, so the state is accessible without
+ * color. The fill is high-contrast (ink on page), not a series tint: this
+ * is a UI control, and it must not be mistaken for a data color.
  */
 
 export const SEGMENT_GROUP =

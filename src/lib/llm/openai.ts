@@ -10,29 +10,30 @@ import {
 import type { EnrichInput, EnrichResult, ReasonEnricher } from './types'
 
 /**
- * Обогащение причин отказа через OpenAI (Responses API).
+ * Denial reason enrichment via OpenAI (Responses API).
  *
- * Учтённые особенности:
+ * Quirks accounted for:
  *
- *  - `instructions` рендерится перед `input`, поэтому стабильная часть
- *    промпта идёт туда, а меняющийся остаток — в `input`. Кеширование
- *    промпта префиксное, обратный порядок сделал бы его бесполезным.
- *  - `prompt_cache_key` задаётся явно и стабильно: он влияет на
- *    маршрутизацию запросов к одному и тому же кешу.
- *  - `max_output_tokens` делится между рассуждением и ответом на
- *    reasoning-моделях, отсюда запас: при тесном лимите ответ обрывался
- *    бы посреди JSON, а `incomplete_details.reason` был бы
- *    `max_output_tokens`.
- *  - `store: false` — это пакетная обработка публичных данных, хранить
- *    её у провайдера незачем.
- *  - Отказ приходит НЕ исключением, а отдельной частью ответа типа
- *    `refusal`, поэтому она проверяется до чтения текста.
+ *  - `instructions` is rendered before `input`, so the stable part of
+ *    the prompt goes there and the changing remainder goes into `input`.
+ *    Prompt caching is prefix-based, so the reverse order would make it
+ *    useless.
+ *  - `prompt_cache_key` is set explicitly and kept stable: it affects
+ *    routing of requests to the same cache.
+ *  - `max_output_tokens` is shared between reasoning and the response on
+ *    reasoning models, hence the headroom: with a tight limit the
+ *    response would get cut off mid-JSON, and `incomplete_details.reason`
+ *    would be `max_output_tokens`.
+ *  - `store: false`: this is batch processing of public data, no reason
+ *    to keep it with the provider.
+ *  - A refusal arrives NOT as an exception but as a separate response
+ *    part of type `refusal`, so it's checked before reading the text.
  */
 
 /**
- * Флагманская модель по умолчанию — тот же уровень качества, что у
- * Claude-провайдера, чтобы результаты были сравнимы. Дешевле — `gpt-5-mini`
- * через LLM_MODEL.
+ * Default flagship model: the same quality tier as the Claude provider,
+ * so results are comparable. Cheaper option is `gpt-5-mini` via
+ * LLM_MODEL.
  */
 const DEFAULT_MODEL = 'gpt-5.2'
 
@@ -44,10 +45,10 @@ export class OpenAIEnricher implements ReasonEnricher {
   private readonly client: OpenAI
 
   constructor(options: { apiKey?: string; model?: string } = {}) {
-    // Своя переменная на провайдера: общий LLM_MODEL при переключении
-    // провайдера уехал бы в чужой API и дал бы там 404.
+    // A provider-specific variable: a shared LLM_MODEL would leak into
+    // the wrong provider's API on a switch and 404 there.
     this.model = options.model ?? optionalEnv('LLM_MODEL_OPENAI') ?? DEFAULT_MODEL
-    // Клиент сам повторяет 429 и 5xx с экспоненциальной задержкой.
+    // The client retries 429 and 5xx on its own with exponential backoff.
     this.client = new OpenAI({
       apiKey: options.apiKey ?? optionalEnv('OPENAI_API_KEY'),
       maxRetries: 3,
@@ -73,8 +74,8 @@ export class OpenAIEnricher implements ReasonEnricher {
         model: this.model,
         instructions: buildStablePrefix(input),
         input: `Trecho:\n${remainder}`,
-        // Задача классификационная: низкое усилие даёт нужное качество
-        // заметно дешевле.
+        // The task is a classification task: low effort gives the
+        // needed quality noticeably cheaper.
         reasoning: { effort: 'low' },
         text: {
           format: {
@@ -89,14 +90,14 @@ export class OpenAIEnricher implements ReasonEnricher {
         prompt_cache_key: `dou-reasons-${this.promptVersion}`,
       })
 
-      // Отказ — это часть ответа, а не исключение.
+      // A refusal is a part of the response, not an exception.
       const refusal = findRefusal(response.output)
       if (refusal !== null) {
         return {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: `модель отклонила запрос: ${refusal.slice(0, 160)}`,
+          reviewReason: `model refused the request: ${refusal.slice(0, 160)}`,
           ...base,
         }
       }
@@ -107,7 +108,7 @@ export class OpenAIEnricher implements ReasonEnricher {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: `ответ не завершён: ${reason}`,
+          reviewReason: `response not completed: ${reason}`,
           ...base,
         }
       }
@@ -124,7 +125,7 @@ export class OpenAIEnricher implements ReasonEnricher {
           matchedSlugs: [],
           newReasons: [],
           needsReview: true,
-          reviewReason: 'ответ не соответствует схеме',
+          reviewReason: "response doesn't match the schema",
           usage,
           ...base,
         }
@@ -143,7 +144,7 @@ export class OpenAIEnricher implements ReasonEnricher {
   }
 }
 
-/** Ищет часть ответа типа `refusal` среди сообщений. */
+/** Looks for a response part of type `refusal` among the messages. */
 function findRefusal(output: OpenAI.Responses.Response['output']): string | null {
   for (const item of output) {
     if (item.type !== 'message') continue
@@ -155,13 +156,13 @@ function findRefusal(output: OpenAI.Responses.Response['output']): string | null
 }
 
 function describeError(error: unknown): string {
-  if (error instanceof OpenAI.RateLimitError) return 'лимит запросов исчерпан'
-  if (error instanceof OpenAI.AuthenticationError) return 'неверный или отсутствующий ключ'
-  if (error instanceof OpenAI.PermissionDeniedError) return 'нет доступа к модели'
-  if (error instanceof OpenAI.NotFoundError) return 'модель не найдена'
-  if (error instanceof OpenAI.BadRequestError) return `запрос отвергнут: ${error.message}`
-  // APIConnectionError проверяется раньше APIError: он его подкласс.
-  if (error instanceof OpenAI.APIConnectionError) return 'сеть недоступна'
-  if (error instanceof OpenAI.APIError) return `ошибка API ${error.status ?? '?'}: ${error.message}`
+  if (error instanceof OpenAI.RateLimitError) return 'rate limit exceeded'
+  if (error instanceof OpenAI.AuthenticationError) return 'invalid or missing key'
+  if (error instanceof OpenAI.PermissionDeniedError) return 'no access to the model'
+  if (error instanceof OpenAI.NotFoundError) return 'model not found'
+  if (error instanceof OpenAI.BadRequestError) return `request rejected: ${error.message}`
+  // APIConnectionError is checked before APIError: it's a subclass of it.
+  if (error instanceof OpenAI.APIConnectionError) return 'network unavailable'
+  if (error instanceof OpenAI.APIError) return `API error ${error.status ?? '?'}: ${error.message}`
   return error instanceof Error ? error.message : String(error)
 }

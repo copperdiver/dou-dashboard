@@ -8,24 +8,25 @@ export type { EnrichInput, EnrichResult, ReasonCandidate, ReasonEnricher } from 
 export { PROMPT_VERSION } from './prompt'
 
 /**
- * Выбор провайдера обогащения.
+ * Enrichment provider selection.
  *
- * `LLM_PROVIDER=claude|openai|noop|auto` (по умолчанию auto).
+ * `LLM_PROVIDER=claude|openai|noop|auto` (defaults to auto).
  *
- * В режиме auto порядок предпочтения — claude, затем openai, затем
- * заглушка. Отсутствие ключей не останавливает конвейер: загрузка
- * и разбор от LLM не зависят, и падать из-за ненастроенного обогащения
- * они не должны.
+ * In auto mode the preference order is claude, then openai, then the
+ * no-op stub. Missing keys don't stop the pipeline: fetching and parsing
+ * don't depend on the LLM, and they shouldn't fail just because
+ * enrichment isn't configured.
  *
- * Явно указанный провайдер без ключа — это ошибка конфигурации, и она
- * сообщается сразу, а не подменяется тихо заглушкой: иначе можно долго
- * ждать переводов, которых никто не делает.
+ * An explicitly chosen provider without a key is a configuration error,
+ * and it's reported immediately rather than silently swapped for the
+ * stub: otherwise you could wait a long time for translations nobody is
+ * actually producing.
  */
 export function createEnricher(): ReasonEnricher {
   const provider = (optionalEnv('LLM_PROVIDER') ?? 'auto').toLowerCase()
 
-  // optionalEnv, а не Boolean: docker compose подставляет пустую строку
-  // для незаданных переменных, и её нельзя считать заданным ключом.
+  // optionalEnv, not Boolean: docker compose substitutes an empty string
+  // for unset variables, and that shouldn't count as a set key.
   const hasAnthropicKey = optionalEnv('ANTHROPIC_API_KEY') !== undefined
   const hasOpenAIKey = optionalEnv('OPENAI_API_KEY') !== undefined
 
@@ -35,11 +36,11 @@ export function createEnricher(): ReasonEnricher {
 
     case 'claude':
     case 'anthropic':
-      if (!hasAnthropicKey) throw new Error('LLM_PROVIDER=claude, но ANTHROPIC_API_KEY не задан')
+      if (!hasAnthropicKey) throw new Error('LLM_PROVIDER=claude, but ANTHROPIC_API_KEY is not set')
       return new ClaudeEnricher()
 
     case 'openai':
-      if (!hasOpenAIKey) throw new Error('LLM_PROVIDER=openai, но OPENAI_API_KEY не задан')
+      if (!hasOpenAIKey) throw new Error('LLM_PROVIDER=openai, but OPENAI_API_KEY is not set')
       return new OpenAIEnricher()
 
     case 'auto':
@@ -49,7 +50,7 @@ export function createEnricher(): ReasonEnricher {
 
     default:
       throw new Error(
-        `неизвестный LLM_PROVIDER=«${provider}»; допустимо: auto, claude, openai, noop`,
+        `unknown LLM_PROVIDER="${provider}"; allowed: auto, claude, openai, noop`,
       )
   }
 }

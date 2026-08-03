@@ -1,14 +1,15 @@
 import type { EnrichInput, ReasonCandidate } from './types'
 
 /**
- * Промпт, схема ответа и разбор — общие для всех провайдеров.
+ * Prompt, response schema, and parsing. Shared across all providers.
  *
- * Вынесено сюда сознательно: если у каждого провайдера будет своя
- * формулировка задачи или своя схема, их результаты перестанут быть
- * сравнимыми, а различие в качестве спишется на модель вместо промпта.
+ * Deliberately factored out here: if each provider had its own wording
+ * of the task or its own schema, their results would stop being
+ * comparable, and a quality difference would get blamed on the model
+ * instead of the prompt.
  *
- * Версия промпта участвует в ключе `llm_cache`: её изменение
- * автоматически обесценивает старый кеш.
+ * The prompt version is part of the `llm_cache` key: changing it
+ * automatically invalidates the old cache.
  */
 export const PROMPT_VERSION = 'reasons-1'
 
@@ -25,11 +26,11 @@ Regras:
 6. Se o trecho não declara nenhum motivo (é apenas fórmula administrativa), devolva as duas listas vazias.`
 
 /**
- * Стабильная часть промпта: инструкции и справочники.
+ * Stable part of the prompt: instructions and reference lists.
  *
- * Кеширование промпта у обоих провайдеров — префиксное совпадение,
- * поэтому здесь только неизменное, а меняющийся остаток текста уходит
- * в пользовательскую часть запроса.
+ * Prompt caching for both providers is a prefix match, so only the
+ * unchanging part goes here, and the changing remainder of the text goes
+ * into the user part of the request.
  */
 export function buildStablePrefix(input: EnrichInput): string {
   return [
@@ -44,10 +45,10 @@ export function buildStablePrefix(input: EnrichInput): string {
 }
 
 /**
- * Схема ответа. Годится и для Anthropic (`output_config.format`), и для
- * OpenAI (`text.format` со `strict: true`): у всех объектов
- * `additionalProperties: false`, и все свойства перечислены в `required` —
- * без этого строгий режим OpenAI схему отвергает.
+ * Response schema. Works for both Anthropic (`output_config.format`) and
+ * OpenAI (`text.format` with `strict: true`): every object has
+ * `additionalProperties: false`, and every property is listed in
+ * `required`: without that OpenAI's strict mode rejects the schema.
  */
 export function buildSchema(
   categoryCodes: readonly string[],
@@ -86,12 +87,12 @@ export const SCHEMA_NAME = 'denial_reasons'
 export type EnrichPayload = { matchedSlugs: string[]; newReasons: ReasonCandidate[] }
 
 /**
- * Разбирает ответ провайдера.
+ * Parses the provider's response.
  *
- * Структурированный вывод гарантирует форму, но значения всё равно
- * перепроверяются: списки категорий и slug'ов закрытые, и лишнее в базу
- * попадать не должно. `null` — ответ непригоден, текст уходит на ручную
- * проверку.
+ * Structured output guarantees the shape, but values are still
+ * re-validated: the lists of categories and slugs are closed, and
+ * nothing extraneous should land in the database. `null` means the
+ * response is unusable and the text goes to manual review.
  */
 export function parseEnrichPayload(
   text: string,
@@ -108,13 +109,14 @@ export function parseEnrichPayload(
     return null
   }
 
-  // Массив и любой другой не-объект — ответ не той формы. Отличать это
-  // от законного «мотивов нет» обязательно: пустой результат помечает
-  // текст разобранным, а сломанный ответ должен уйти на ручную проверку.
+  // An array or any other non-object is the wrong response shape. This must
+  // be distinguished from a legitimate "no reasons": an empty result
+  // marks the text as parsed, while a broken response must go to manual
+  // review.
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
   const record = raw as Record<string, unknown>
 
-  // Ни одного ожидаемого поля — тоже не та форма.
+  // Neither expected field present: also the wrong shape.
   if (!Array.isArray(record.matched_slugs) && !Array.isArray(record.new_reasons)) return null
 
   const matchedSlugs = Array.isArray(record.matched_slugs)

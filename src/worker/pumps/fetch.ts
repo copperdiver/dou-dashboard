@@ -11,21 +11,21 @@ type Claim = {
   urlTitle: string
   editionDate: string
   fetchAttempts: number
-  /** Хеш предыдущего тела: захват его не меняет, поэтому здесь он ещё старый. */
+  /** Hash of the previous body: claiming doesn't change it, so it's still the old value here. */
   oldSha256: string | null
 }
 
 /**
- * Забирает страницы, у которых ещё нет тела. Аренда через next_attempt_at:
- * упавший процесс не оставляет страницу заблокированной навсегда.
+ * Claims pages that don't have a body yet. Lease via next_attempt_at:
+ * a crashed process doesn't leave a page locked forever.
  */
 async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
   const result = await db.execute<Claim>(sql`
     with claimed as (
       select id
       from ${sourcePages}
-      -- Только pending: у окончательно упавших страниц next_attempt_at
-      -- обнуляется, и включение 'failed' сделало бы их вечно захватываемыми.
+      -- Only pending: for pages that have finally failed, next_attempt_at
+      -- is cleared, and including 'failed' would make them forever claimable.
       where fetch_status = 'pending'
         and (next_attempt_at is null or next_attempt_at < now())
       order by edition_date desc, pub_order nulls last
@@ -50,7 +50,7 @@ export const fetchPages: Pump = async ({ log, client }: PumpContext) => {
 
   const cooldown = await client.cooldownRemainingMs()
   if (cooldown > 0) {
-    log(`пауза источника ещё ${Math.ceil(cooldown / 1000)} с — пропускаю`)
+    log(`source cooldown for another ${Math.ceil(cooldown / 1000)}s, skipping`)
     return { itemsProcessed: 0, meta: { skipped: 'cooldown' }, cooldownMs: cooldown }
   }
 
@@ -66,8 +66,8 @@ export const fetchPages: Pump = async ({ log, client }: PumpContext) => {
     const response = await client.get(claim.url)
 
     if (response.kind === 'budget_exhausted') {
-      log(`суточный бюджет запросов исчерпан (${response.used}/${response.limit})`)
-      await releaseClaim(claim, 'суточный бюджет запросов исчерпан', maxAttempts)
+      log(`daily request budget exhausted (${response.used}/${response.limit})`)
+      await releaseClaim(claim, 'daily request budget exhausted', maxAttempts)
       return {
         itemsProcessed: fetched,
         meta: { pages: fetched, budgetExhausted: true },
@@ -75,7 +75,7 @@ export const fetchPages: Pump = async ({ log, client }: PumpContext) => {
     }
 
     if (response.kind === 'forbidden') {
-      log(`403 от источника, пауза ${Math.round(response.cooldownMs / 1000)} с`)
+      log(`403 from source, pausing for ${Math.round(response.cooldownMs / 1000)}s`)
       await releaseClaim(claim, `HTTP ${response.status} (WAF)`, maxAttempts)
       return {
         itemsProcessed: fetched,
@@ -112,8 +112,8 @@ export const fetchPages: Pump = async ({ log, client }: PumpContext) => {
         set: { html: sql`excluded.html`, sha256: sql`excluded.sha256`, fetchedAt: sql`now()` },
       })
 
-    // Тело не изменилось — не сбрасываем parser_version, иначе страница
-    // пошла бы на переразбор впустую при каждой повторной загрузке.
+    // Body unchanged: don't reset parser_version, otherwise the page
+    // would go back for re-parsing needlessly on every re-fetch.
     const changed = claim.oldSha256 !== sha256
 
     if (changed) {
@@ -139,7 +139,7 @@ export const fetchPages: Pump = async ({ log, client }: PumpContext) => {
     fetched += 1
   }
 
-  log(`страниц загружено ${fetched}, снято ${gone}, сбоев ${failures}`)
+  log(`pages fetched ${fetched}, gone ${gone}, failures ${failures}`)
 
   return {
     itemsProcessed: fetched,

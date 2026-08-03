@@ -8,30 +8,31 @@ import { SiteNav, type NavItem } from '@/components/site-nav'
 import { isNavCollapsed, NAV_COOKIE, parseTheme, THEME_COOKIE } from '@/lib/ui-state'
 import { getDictionary, isLocale, LOCALES } from '@/i18n'
 import '../globals.css'
-// Флаги стран. Глобальный CSS допускается только в корневом layout,
-// а корневой здесь именно этот.
+// Country flags. Global CSS is only allowed in the root layout,
+// and this is that root layout.
 import 'flag-icons/css/flag-icons.min.css'
 
 /*
- * Это корневой layout приложения: `src/app/layout.tsx` намеренно
- * отсутствует. Тег <html> должен получить атрибут lang текущей локали,
- * а корневой layout вне сегмента [locale] её не знает.
+ * This is the app's root layout: `src/app/layout.tsx` is intentionally
+ * absent. The <html> tag needs the current locale's lang attribute, and a
+ * root layout outside the [locale] segment wouldn't know it.
  */
 
-/** Заранее известный список локалей — по нему Next строит маршруты. */
+/** Locale list known in advance: Next builds routes from it. */
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }))
 }
 
 /*
- * Канонический адрес и hreflang выводятся только при заданном
- * SITE_URL: иначе Next подставил бы localhost, а неверный hreflang хуже
- * отсутствующего.
+ * The canonical URL and hreflang are only emitted when SITE_URL is set:
+ * otherwise Next would fall back to localhost, and a wrong hreflang is
+ * worse than none.
  *
- * Имя без префикса NEXT_PUBLIC_ намеренно: такие переменные Next
- * подставляет на этапе сборки, и задать их в compose на сервере было бы
- * нельзя. Значение читается только серверным `generateMetadata`, поэтому
- * остаётся обычной переменной окружения — и меняется без пересборки образа.
+ * The name has no NEXT_PUBLIC_ prefix on purpose. Such variables are
+ * inlined by Next at build time, which would make it impossible to set
+ * them via compose on the server. The value is only read by the server-side
+ * `generateMetadata`, so it stays a regular environment variable and can
+ * change without rebuilding the image.
  */
 const SITE_URL = process.env.SITE_URL
 
@@ -41,7 +42,7 @@ export async function generateMetadata({
   params: Promise<{ locale: string }>
 }): Promise<Metadata> {
   const { locale } = await params
-  // Заголовок для неизвестной локали не нужен — страница станет 404.
+  // No title needed for an unknown locale: the page will 404 anyway.
   if (!isLocale(locale)) return {}
 
   const d = getDictionary(locale)
@@ -69,14 +70,14 @@ export default async function LocaleLayout({
   params: Promise<{ locale: string }>
 }) {
   const { locale } = await params
-  // Неизвестная локаль — 404, а не тихий откат на язык по умолчанию:
-  // иначе опечатка в URL отдавала бы страницу с чужим языком.
+  // Unknown locale is a 404, not a silent fallback to the default language:
+  // otherwise a typo in the URL would serve a page in the wrong language.
   if (!isLocale(locale)) notFound()
 
   const d = getDictionary(locale)
 
-  // Оформление приходит cookie и попадает прямо в разметку: так атрибутами
-  // владеет React, и клиентская навигация их не снимает.
+  // Appearance comes from a cookie and lands directly in the markup: this way
+  // React owns the attributes, and client-side navigation doesn't strip them.
   const jar = await cookies()
   const theme = parseTheme(jar.get(THEME_COOKIE)?.value)
   const navCollapsed = isNavCollapsed(jar.get(NAV_COOKIE)?.value)
@@ -98,8 +99,8 @@ export default async function LocaleLayout({
     >
       <head />
       <body className="min-h-dvh antialiased">
-        {/* Счётчик в корневом layout, поэтому попадает на все страницы
-            и переживает клиентскую навигацию между ними. */}
+        {/* The counter lives in the root layout, so it lands on every page
+            and survives client-side navigation between them. */}
         <Clarity id={process.env.CLARITY_ID} />
 
         <SiteNav
@@ -109,10 +110,10 @@ export default async function LocaleLayout({
         />
 
         {/*
-          Меню вынуто из потока в обеих раскладках, поэтому содержимое
-          отступает от него само: снизу — на высоту панели с безопасной
-          зоной, слева на десктопе — на ширину колонки. Ширина приходит
-          переменной, так что отступ следует за сворачиванием меню.
+          The menu is taken out of flow in both layouts, so content pads for
+          it on its own: at the bottom by the panel's height plus the safe
+          area, on the left on desktop by the column's width. The width comes
+          from a CSS variable, so the padding follows the menu's collapse state.
         */}
         <div className="sm:pl-[var(--nav-w)]">
           <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
@@ -129,9 +130,9 @@ export default async function LocaleLayout({
               </div>
             </header>
 
-            {/* Подвала нет: подпись студии живёт в самой навигации —
-                внизу боковой панели на десктопе и пятой вкладкой снизу
-                на телефоне. Отступ под закреплённую панель остаётся. */}
+            {/* There's no footer: the studio credit lives inside the nav itself,
+                at the bottom of the sidebar on desktop and as a fifth tab
+                on mobile. Padding for the fixed panel stays either way. */}
             <main className="mt-5 pb-[calc(var(--nav-h)+env(safe-area-inset-bottom,0px)+1rem)] sm:pb-8">
               {children}
             </main>

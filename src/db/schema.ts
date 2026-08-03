@@ -18,7 +18,7 @@ import {
 } from 'drizzle-orm/pg-core'
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Журнал фоновых задач
+ * Background job log
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const jobStatusEnum = pgEnum('job_status', ['running', 'success', 'failed'])
@@ -26,8 +26,7 @@ export const jobStatusEnum = pgEnum('job_status', ['running', 'success', 'failed
 export type JobStatus = (typeof jobStatusEnum.enumValues)[number]
 
 /**
- * Одна строка на прогон насоса, а не на обработанный элемент:
- * детали прогона живут в meta.
+ * One row per pump run, not per processed item: run details live in meta.
  */
 export const jobRuns = pgTable(
   'job_runs',
@@ -54,10 +53,10 @@ export const jobRuns = pgTable(
 export type JobRun = typeof jobRuns.$inferSelect
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Приём данных из DOU
+ * DOU data ingestion
  *
- * День выпуска везде — date, а не производная от timestamp: часовой пояс
- * процесса (в compose Europe/Moscow) не должен сдвигать бразильские сутки.
+ * Edition date is a `date` everywhere, not derived from a timestamp: the
+ * process timezone (Europe/Moscow in compose) shouldn't shift Brazilian days.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const ingestStatusEnum = pgEnum('ingest_status', [
@@ -71,9 +70,9 @@ export const ingestStatusEnum = pgEnum('ingest_status', [
 export const ingestOriginEnum = pgEnum('ingest_origin', ['backfill', 'incremental'])
 
 /**
- * Состояние опроса одного дня. Это и очередь для насоса enumerate,
- * и карта покрытия: без неё пропущенный день на графике выглядел бы
- * как «ноль одобрений», то есть как ложь.
+ * Polling state for a single day. This serves both as a queue for the
+ * enumerate pump and as a coverage map: without it, a skipped day would
+ * show up on the chart as "zero approvals", which is a lie.
  */
 export const ingestDays = pgTable(
   'ingest_days',
@@ -82,7 +81,7 @@ export const ingestDays = pgTable(
     section: text('section').notNull().default('do1'),
     status: ingestStatusEnum('status').notNull().default('pending'),
     origin: ingestOriginEnum('origin').notNull().default('incremental'),
-    /** Меньше — раньше: свежие дни не ждут, пока дожуётся годовой бэкфилл. */
+    /** Lower is earlier: fresh days don't wait for a year-long backfill to finish chewing through. */
     priority: smallint('priority').notNull().default(0),
     articlesFound: integer('articles_found'),
     relevantFound: integer('relevant_found'),
@@ -102,8 +101,8 @@ export const ingestDays = pgTable(
 )
 
 /**
- * Сырой jsonArray дневного индекса. Позволяет расширить фильтр
- * релевантности и переразобрать год, не обращаясь к сети.
+ * Raw jsonArray of the daily index. Lets us broaden the relevance filter
+ * and re-parse a whole year without hitting the network.
  */
 export const ingestDaySnapshots = pgTable(
   'ingest_day_snapshots',
@@ -121,7 +120,7 @@ export const selectedByEnum = pgEnum('selected_by', ['hierarchy', 'keyword', 'bo
 
 export const fetchStatusEnum = pgEnum('fetch_status', ['pending', 'fetched', 'gone', 'failed'])
 
-/** `running` — страница взята насосом разбора; аренда истекает по parsed_at. */
+/** `running`: page has been claimed by the parse pump; the lease expires via parsed_at. */
 export const parseStatusEnum = pgEnum('parse_status', [
   'pending',
   'running',
@@ -131,7 +130,7 @@ export const parseStatusEnum = pgEnum('parse_status', [
   'failed',
 ])
 
-/** Страница-статья DOU. Может содержать от 1 до 13 актов. */
+/** A DOU article page. May contain anywhere from 1 to 13 acts. */
 export const sourcePages = pgTable(
   'source_pages',
   {
@@ -146,7 +145,7 @@ export const sourcePages = pgTable(
     pubOrder: integer('pub_order'),
     hierarchyStr: text('hierarchy_str'),
     title: text('title'),
-    /** Чем статья отобрана: иерархией органа, ключевым словом или обоими. */
+    /** How the article was selected: by agency hierarchy, by keyword, or both. */
     selectedBy: selectedByEnum('selected_by').notNull().default('hierarchy'),
     fetchStatus: fetchStatusEnum('fetch_status').notNull().default('pending'),
     httpStatus: integer('http_status'),
@@ -160,9 +159,9 @@ export const sourcePages = pgTable(
     parsedAt: timestamp('parsed_at', { withTimezone: true }),
     parseError: text('parse_error'),
     /*
-     * Попытки разбора со своим счётчиком и своей отсрочкой: `next_attempt_at`
-     * рядом принадлежит загрузке, и делить его между двумя насосами значило
-     * бы, что неудача разбора откладывает повторную загрузку.
+     * Parse attempts get their own counter and their own backoff:
+     * `next_attempt_at` next to them belongs to fetching, and sharing it
+     * between two pumps would mean a parse failure delays a re-fetch.
      */
     parseAttempts: integer('parse_attempts').notNull().default(0),
     parseNextAttemptAt: timestamp('parse_next_attempt_at', { withTimezone: true }),
@@ -180,8 +179,8 @@ export const sourcePages = pgTable(
 )
 
 /**
- * Тело страницы отдельной таблицей, чтобы горячая source_pages осталась
- * узкой. ~1000 страниц в год по ~200 КБ — после сжатия TOAST десятки МБ.
+ * Page body lives in a separate table so the hot source_pages table stays
+ * narrow. ~1000 pages a year at ~200KB each: tens of MB after TOAST compression.
  */
 export const sourcePageHtml = pgTable('source_page_html', {
   pageId: uuid('page_id')
@@ -209,9 +208,9 @@ export const naturalizationTypeEnum = pgEnum('naturalization_type', [
 ])
 
 /**
- * Акт внутри страницы. Тип определяется ПО СОДЕРЖИМОМУ: заголовки
- * ненадёжны (`PORTARIA #.#` без Nº, `Despachos` в разном регистре,
- * `Deferimento` внутри despacho), art_type хранится лишь как справка.
+ * An act within a page. Its kind is determined BY CONTENT: headers are
+ * unreliable (`PORTARIA #.#` without Nº, `Despachos` in mixed case,
+ * `Deferimento` inside a despacho). art_type is stored only for reference.
  */
 export const acts = pgTable(
   'acts',
@@ -225,7 +224,7 @@ export const acts = pgTable(
     identificaRaw: text('identifica_raw'),
     actKind: actKindEnum('act_kind').notNull().default('other'),
     naturalizationType: naturalizationTypeEnum('naturalization_type'),
-    /** Правовые ссылки как контекст: 'art.65', 'art.234' и т.п. */
+    /** Legal references as context: 'art.65', 'art.234', etc. */
     legalBasis: text('legal_basis').array(),
     paragraphs: jsonb('paragraphs').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     bodySha256: text('body_sha256'),
@@ -238,7 +237,7 @@ export const acts = pgTable(
 )
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Справочники
+ * Reference data
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const countries = pgTable(
@@ -255,9 +254,9 @@ export const countries = pgTable(
 )
 
 /**
- * Написания страны, встречающиеся в DOU и не совпадающие с ISO-названием:
- * опечатки источника (`Guiná-Bissau`), устаревшая орфография (`Coréia do Sul`),
- * иные формы (`Estado da Palestina`, `Belarus`).
+ * Country spellings that show up in DOU and don't match the ISO name:
+ * source typos (`Guiná-Bissau`), outdated spelling (`Coréia do Sul`),
+ * alternate forms (`Estado da Palestina`, `Belarus`).
  */
 export const countryAliases = pgTable(
   'country_aliases',
@@ -266,7 +265,7 @@ export const countryAliases = pgTable(
     countryId: smallint('country_id')
       .notNull()
       .references(() => countries.id, { onDelete: 'cascade' }),
-    /** true — сопоставление неоднозначно и требует ручной проверки. */
+    /** true: the match is ambiguous and needs manual review. */
     isAmbiguous: boolean('is_ambiguous').notNull().default(false),
     note: text('note'),
   },
@@ -298,17 +297,17 @@ export const brStateAliases = pgTable(
 )
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Факты: одобрения и отказы — раздельно
+ * Facts: approvals and denials, kept separate
  *
- * Полиморфная таблица дала бы болото nullable-колонок и составные индексы,
- * половина которых бесполезна: поля, фиды и статистика различаются почти
- * полностью.
+ * A polymorphic table would give us a swamp of nullable columns and
+ * composite indexes, half of them useless: the fields, feeds, and stats
+ * differ almost entirely.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
- * name_norm — материализованная колонка, а не индекс по выражению:
- * unaccent() объявлена STABLE, поэтому индексировать unaccent(name)
- * Postgres не даёт. Нормализация делается в приложении при записи.
+ * name_norm is a materialized column, not an expression index:
+ * unaccent() is declared STABLE, so Postgres won't let us index
+ * unaccent(name). Normalization happens in the app on write.
  */
 export const approvals = pgTable(
   'approvals',
@@ -317,7 +316,7 @@ export const approvals = pgTable(
     actId: uuid('act_id')
       .notNull()
       .references(() => acts.id, { onDelete: 'cascade' }),
-    /** Денормализовано: каждый запрос фида фильтрует и сортирует по дате. */
+    /** Denormalized: every feed query filters and sorts by date. */
     pageId: uuid('page_id')
       .notNull()
       .references(() => sourcePages.id, { onDelete: 'cascade' }),
@@ -338,31 +337,31 @@ export const approvals = pgTable(
     processNumberNorm: text('process_number_norm'),
     paragraphText: text('paragraph_text').notNull(),
     paragraphSha256: text('paragraph_sha256').notNull(),
-    /** 1.0 — все поля извлечены; ниже — часть отсутствует в источнике. */
+    /** 1.0: all fields extracted; lower means some are missing from the source. */
     parseConfidence: numeric('parse_confidence', { precision: 3, scale: 2 }),
     parserVersion: integer('parser_version').notNull().default(1),
     /**
-     * Повторная публикация: та же portaria по тому же процессу вышла
-     * раньше. Наблюдалось, что DOU публикует один документ дважды под
-     * разными идентификаторами и в разные дни выпуска.
+     * Republication: the same portaria for the same process was already
+     * published earlier. Observed in practice: DOU publishes the same
+     * document twice, under different identifiers and on different edition dates.
      */
     isRepublication: boolean('is_republication').notNull().default(false),
     /**
-     * Считается новым одобрением. Зеркало `counts_as_new_denial`: без
-     * него повторные публикации удваивали счётчик, а у отказов такой
-     * защиты уже была, у одобрений — нет.
+     * Counts as a new approval. Mirrors `counts_as_new_denial`: without
+     * it, republications would double-count. Denials already had this
+     * protection, approvals didn't.
      */
     countsAsNewApproval: boolean('counts_as_new_approval').notNull().default(true),
-    /** Мягкое удаление: при переразборе запись не исчезает бесследно. */
+    /** Soft delete: on re-parse, the record doesn't just vanish without a trace. */
     retiredAt: timestamp('retired_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('approvals_act_paragraph_key').on(t.actId, t.paragraphSha256),
-    // Основной фид: только новые одобрения, как и у отказов.
+    // Main feed: only new approvals, same as with denials.
     index('approvals_feed_idx')
       .on(t.editionDate.desc(), t.id.desc())
       .where(sql`${t.countsAsNewApproval} and ${t.retiredAt} is null`),
-    // Отдельный индекс под выдачу без отсечения повторов.
+    // Separate index for output without filtering out repeats.
     index('approvals_all_feed_idx').on(t.editionDate.desc(), t.id.desc()),
     index('approvals_process_idx').on(t.processNumberNorm, t.editionDate),
     index('approvals_country_idx').on(t.countryId, t.editionDate.desc(), t.id.desc()),
@@ -373,9 +372,9 @@ export const approvals = pgTable(
 )
 
 /**
- * `archived` — `Arquivamento do pedido`: производство прекращено, а не
- * отказано по существу. Отдельный вид нужен, чтобы такие решения не
- * попадали в счётчик отказов.
+ * `archived` (`Arquivamento do pedido`): the process was closed, not
+ * denied on the merits. A separate kind is needed so these decisions
+ * don't end up in the denial count.
  */
 export const decisionKindEnum = pgEnum('decision_kind', [
   'denial',
@@ -395,15 +394,15 @@ export const subjectKindEnum = pgEnum('subject_kind', [
 export const appealLinkMethodEnum = pgEnum('appeal_link_method', ['process', 'name', 'none'])
 
 /**
- * Запись об отказе. Двойной счёт снимается двумя материализованными
- * флагами, а не условиями, размазанными по запросам:
+ * A denial record. Double-counting is avoided with two materialized
+ * flags, instead of conditions smeared across queries:
  *
- *  - is_upheld — `Manutenção de Indeferimento`, то есть подтверждение
- *    прежнего решения при обжаловании, а не новый отказ. Доля крайне
- *    неравномерна (3,8% на 20 подряд идущих днях против 47% на выборке,
- *    разбросанной по 8 месяцам) — решения публикуются пачками.
- *  - is_republication — тот же процесс с тем же типом решения уже
- *    публиковался в более ранний день (наблюдалось 1 на 834).
+ *  - is_upheld: `Manutenção de Indeferimento`, i.e. confirming a prior
+ *    decision on appeal, not a new denial. The share is highly uneven
+ *    (3.8% over 20 consecutive days vs. 47% in a sample spread across
+ *    8 months): decisions get published in batches.
+ *  - is_republication: the same process with the same decision type
+ *    was already published on an earlier day (observed 1 in 834).
  */
 export const denials = pgTable(
   'denials',
@@ -417,7 +416,7 @@ export const denials = pgTable(
       .references(() => sourcePages.id, { onDelete: 'cascade' }),
     editionDate: date('edition_date', { mode: 'string' }).notNull(),
     blockOrdinal: integer('block_ordinal').notNull(),
-    /** `Código: 867230` — лучший естественный ключ блока. */
+    /** `Código: 867230`, the best natural key for the block. */
     codigo: text('codigo'),
     assuntoRaw: text('assunto_raw'),
     decisionKind: decisionKindEnum('decision_kind').notNull().default('denial'),
@@ -440,15 +439,16 @@ export const denials = pgTable(
   (t) => [
     uniqueIndex('denials_act_block_key').on(t.actId, t.blockOrdinal),
     /*
-     * `Código` НЕ уникален даже внутри акта — это подтверждено данными.
-     * В выпуске от 20.03.2026 код 727.407 стоит на двух разных решениях:
-     * одно про заявительницу и требование языка (ст. 65 III), другое про
-     * заявителя, судимости и язык (ст. 234 III и V). Такое встречается
-     * на 10 страницах из 886.
+     * `Código` is NOT unique even within a single act: confirmed by the
+     * data. In the edition from 2026-03-20, code 727.407 appears on two
+     * different decisions: one about a female applicant and a language
+     * requirement (art. 65 III), another about a male applicant, criminal
+     * record, and language (art. 234 III and V). This shows up on 10 out
+     * of 886 pages.
      *
-     * Раньше здесь стоял уникальный индекс, и он останавливал разбор
-     * целиком. Настоящий ключ записи — `(act_id, block_ordinal)`, по нему
-     * и идёт upsert; индекс по коду нужен только для поиска.
+     * There used to be a unique index here, and it halted parsing entirely.
+     * The real record key is `(act_id, block_ordinal)`, which is what the
+     * upsert uses; the index on the code is only for lookups.
      */
     index('denials_act_codigo_idx').on(t.actId, t.codigo).where(sql`${t.codigo} is not null`),
     index('denials_feed_idx')
@@ -463,11 +463,11 @@ export const denials = pgTable(
 )
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Канонизация причин отказа
+ * Denial reason canonicalization
  *
- * Два уровня: уникальный текст (reason_texts) и атомарная каноническая
- * причина (reasons). Дедупликация текстов даёт правила и LLM на 282
- * уникальных текста вместо 659 отказов.
+ * Two levels: unique text (reason_texts) and an atomic canonical reason
+ * (reasons). Deduplicating texts gives rules and the LLM 282 unique texts
+ * to work with instead of 659 denials.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const reviewStateEnum = pgEnum('review_state', [
@@ -485,9 +485,9 @@ export const reasonTexts = pgTable(
     textNorm: text('text_norm').notNull(),
     normSha256: text('norm_sha256').notNull(),
     occurrences: integer('occurrences').notNull().default(0),
-    /** Правовые ссылки — контекст, а не причина: 'art.65:III', 'art.234:II'. */
+    /** Legal references are context, not the reason itself: 'art.65:III', 'art.234:II'. */
     legalRefs: text('legal_refs').array(),
-    /** Доля символов текста, покрытая спанами правил — метрика качества. */
+    /** Share of text characters covered by rule spans (a quality metric). */
     coveredCharRatio: numeric('covered_char_ratio', { precision: 4, scale: 3 }),
     rulesVersion: integer('rules_version').notNull().default(0),
     reviewState: reviewStateEnum('review_state').notNull().default('auto'),
@@ -503,8 +503,8 @@ export const reasonTexts = pgTable(
 )
 
 /**
- * Закрытый список категорий. Размер ограничен не предметной областью,
- * а читаемостью графика: на лайн-чарте дрилл-дауна различимо 6–8 линий.
+ * A closed list of categories. The size is limited not by the domain,
+ * but by chart readability: a drill-down line chart can distinguish 6-8 lines.
  */
 export const reasonCategories = pgTable(
   'reason_categories',
@@ -513,7 +513,7 @@ export const reasonCategories = pgTable(
     code: text('code').notNull(),
     nameRu: text('name_ru').notNull(),
     nameEn: text('name_en').notNull(),
-    /** Слот палитры серий (1..8), чтобы bar и линии дрилл-дауна совпадали. */
+    /** Series palette slot (1..8), so the bar chart and drill-down lines match up. */
     colorSlot: smallint('color_slot').notNull(),
     sortOrder: smallint('sort_order').notNull(),
   },
@@ -549,7 +549,7 @@ export const reasons = pgTable(
     source: reasonSourceEnum('source').notNull().default('rule'),
     llmModel: text('llm_model'),
     promptVersion: text('prompt_version'),
-    /** Ручные правки не затираются переклассификацией. */
+    /** Manual edits aren't overwritten by reclassification. */
     isManuallyEdited: boolean('is_manually_edited').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -560,7 +560,7 @@ export const reasons = pgTable(
   ],
 )
 
-/** Связь текста с атомарными причинами, со спанами-доказательствами. */
+/** Links a text to atomic reasons, with evidence spans. */
 export const reasonTextReasons = pgTable(
   'reason_text_reasons',
   {
@@ -585,9 +585,9 @@ export const reasonTextReasons = pgTable(
 )
 
 /**
- * Плоская связь отказа с причинами: производная от reason_text_reasons,
- * но с протащенными category_id и edition_date — иначе дрилл-даун
- * «категория × день» требовал бы join через три таблицы.
+ * A flat link from denial to reasons: derived from reason_text_reasons,
+ * but with category_id and edition_date carried through. Otherwise the
+ * "category x day" drill-down would need a join across three tables.
  */
 export const denialReasons = pgTable(
   'denial_reasons',
@@ -610,7 +610,7 @@ export const denialReasons = pgTable(
   ],
 )
 
-/** Кеш ответов LLM: переразбор и повторные прогоны бесплатны. */
+/** LLM response cache: re-parsing and re-runs come for free. */
 export const llmCache = pgTable(
   'llm_cache',
   {
@@ -624,19 +624,19 @@ export const llmCache = pgTable(
 )
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Витрины
+ * Rollup tables
  *
- * Нужны не для скорости (на таком объёме любой график считается за 5–20 мс),
- * а для единообразия определений, различения «нет данных» и «ноль»,
- * и для дрилл-дауна категория × день.
+ * These exist not for speed (at this volume any chart computes in 5-20ms),
+ * but for consistent definitions, telling "no data" apart from "zero",
+ * and for the category x day drill-down.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const coverageEnum = pgEnum('day_coverage', ['covered', 'missing', 'no_edition'])
 
 /**
- * Возрастные группы. Значения здесь и границы в AGE_BUCKET_SQL
- * (src/worker/pumps/rollup.ts) — единственное определение; менять их
- * нужно в паре, иначе вставка в витрину упадёт на приведении к enum.
+ * Age buckets. The values here and the boundaries in AGE_BUCKET_SQL
+ * (src/worker/pumps/rollup.ts) are the single definition: change them
+ * together, or inserting into the rollup table will fail on the enum cast.
  */
 export const ageBucketEnum = pgEnum('age_bucket', [
   '0-17',
@@ -656,7 +656,7 @@ export const dailyStats = pgTable('daily_stats', {
   otherDecisions: integer('other_decisions').notNull().default(0),
   pages: integer('pages').notNull().default(0),
   acts: integer('acts').notNull().default(0),
-  /** Из ingest_days, не из фактов: день без выпуска — не «ноль одобрений». */
+  /** From ingest_days, not from the facts: a day without an edition isn't "zero approvals". */
   coverage: coverageEnum('coverage').notNull().default('covered'),
   computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
 })
@@ -692,8 +692,9 @@ export const dailyStateStats = pgTable(
 )
 
 /**
- * У отказа до 6 причин из разных категорий, поэтому сумма по столбцам
- * НЕ равна числу отказов: метрика — count(distinct denial_id).
+ * A denial can have up to 6 reasons across different categories, so the
+ * sum across columns is NOT equal to the number of denials: the metric
+ * is count(distinct denial_id).
  */
 export const dailyReasonCategoryStats = pgTable(
   'daily_reason_category_stats',
@@ -721,10 +722,10 @@ export const dailyAgeBucketStats = pgTable(
 )
 
 /**
- * Витрина по статье под фид обработанных статей. Материализована,
- * потому что фид сортируется и фильтруется по этим счётчикам, а
- * сортировка по агрегату через join ломает keyset-пагинацию.
- * Единица пересчёта — страница, поэтому dirty_days здесь не нужен.
+ * Per-page rollup for the processed-articles feed. Materialized because
+ * the feed sorts and filters by these counters, and sorting by an
+ * aggregate through a join breaks keyset pagination. The recompute unit
+ * is the page, so dirty_days isn't needed here.
  */
 export const sourcePageStats = pgTable(
   'source_page_stats',
@@ -748,10 +749,10 @@ export const sourcePageStats = pgTable(
     topReasonCategoryId: smallint('top_reason_category_id').references(() => reasonCategories.id),
     ageAvg: numeric('age_avg', { precision: 5, scale: 2 }),
     peopleWithoutBirthDate: integer('people_without_birth_date').notNull().default(0),
-    /* Качество разбора */
+    /* Parse quality */
     unparsedParagraphs: integer('unparsed_paragraphs').notNull().default(0),
-    /** Непустая country_raw без country_id: иначе неопознанные страны
-     *  молча выпали бы из countries_distinct. */
+    /** A non-empty country_raw without a country_id: otherwise unrecognized
+     *  countries would silently drop out of countries_distinct. */
     peopleWithoutCountry: integer('people_without_country').notNull().default(0),
     reasonTextsUncovered: integer('reason_texts_uncovered').notNull().default(0),
     avgCoveredCharRatio: numeric('avg_covered_char_ratio', { precision: 4, scale: 3 }),
@@ -770,7 +771,7 @@ export const sourcePageStats = pgTable(
   ],
 )
 
-/** Дни, требующие пересчёта витрин. */
+/** Days that need their rollups recomputed. */
 export const dirtyDays = pgTable('dirty_days', {
   day: date('day', { mode: 'string' }).primaryKey(),
   reason: text('reason').notNull(),
@@ -778,7 +779,7 @@ export const dirtyDays = pgTable('dirty_days', {
 })
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Связи для реляционных запросов Drizzle
+ * Relations for Drizzle's relational queries
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export const sourcePagesRelations = relations(sourcePages, ({ many, one }) => ({
@@ -823,7 +824,7 @@ export const reasonsRelations = relations(reasons, ({ one, many }) => ({
 }))
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Выводимые типы
+ * Inferred types
  * ──────────────────────────────────────────────────────────────────────────── */
 
 export type IngestDay = typeof ingestDays.$inferSelect

@@ -1,11 +1,11 @@
 /**
- * Разведка форматов в уже загруженных страницах: какие метки, какие
- * значения Assunto и какие формы номеров процесса встречаются.
+ * Format reconnaissance over already-fetched pages: which labels, which
+ * Assunto values, and which process-number shapes show up.
  *
  *   npx tsx --env-file-if-exists=.env scripts/survey-blocks.ts
  *
- * Нужно, чтобы правила парсера опирались на измерение, а не на догадку,
- * и чтобы после расширения бэкфилла увидеть новые формы.
+ * Needed so parser rules are based on measurement rather than guesswork,
+ * and to spot new shapes after expanding the backfill.
  */
 import { eq } from 'drizzle-orm'
 import { closePool, db } from '../src/db/client'
@@ -32,7 +32,7 @@ try {
       .map((b) => b.text),
   )
 
-  console.log(`страниц ${pages.length}, абзацев ${paragraphs.length}\n`)
+  console.log(`pages ${pages.length}, paragraphs ${paragraphs.length}\n`)
 
   const labels = new Map<string, number>()
   const assuntos = new Map<string, number>()
@@ -50,17 +50,17 @@ try {
     }
   }
 
-  console.log('Метки в начале абзаца:')
+  console.log('Labels at the start of a paragraph:')
   for (const [k, v] of top(labels, 12)) console.log(`  ${String(v).padStart(5)}  ${k}`)
 
-  console.log('\nЗначения Assunto:')
+  console.log('\nAssunto values:')
   for (const [k, v] of top(assuntos, 16)) console.log(`  ${String(v).padStart(5)}  ${k.slice(0, 90)}`)
 
-  console.log('\nФормы номеров (цифры маскированы):')
+  console.log('\nNumber shapes (digits masked):')
   for (const [k, v] of top(shapes, 10)) console.log(`  ${String(v).padStart(5)}  ${k}`)
 
-  // Последовательность меток внутри страницы: показывает, какие структуры
-  // блоков реально встречаются, а не только какие метки есть.
+  // Label sequence within a page: shows which block structures actually
+  // occur, not just which labels exist.
   const sequences = new Map<string, number>()
   const strayProcesso: string[] = []
 
@@ -82,7 +82,7 @@ try {
       }
     }
 
-    // Сжимаем в повторяющийся шаблон: ищем период последовательности.
+    // Compress into a repeating pattern: look for the sequence's period.
     const compact = seq.join(',')
     for (let period = 1; period <= 5; period += 1) {
       const unit = seq.slice(0, period).join(',')
@@ -94,17 +94,17 @@ try {
         bump(sequences, `${unit}  ×${Math.round(seq.length / period)}`)
         break
       }
-      if (period === 5) bump(sequences, `нерегулярно (${seq.length} меток): ${compact.slice(0, 60)}…`)
+      if (period === 5) bump(sequences, `irregular (${seq.length} labels): ${compact.slice(0, 60)}…`)
     }
   }
 
-  console.log('\nСтруктуры блоков по страницам:')
-  for (const [k, v] of top(sequences, 12)) console.log(`  ${String(v).padStart(3)} стр.  ${k}`)
+  console.log('\nBlock structures by page:')
+  for (const [k, v] of top(sequences, 12)) console.log(`  ${String(v).padStart(3)} pg.  ${k}`)
 
-  console.log('\nПримеры «Processo» не после Assunto:')
+  console.log('\nExamples of "Processo" not after Assunto:')
   for (const s of strayProcesso) console.log(`  ${s}`)
 } catch (error) {
-  console.error('Ошибка:', error)
+  console.error('Error:', error)
   process.exitCode = 1
 } finally {
   await closePool()

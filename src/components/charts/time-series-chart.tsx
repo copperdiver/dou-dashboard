@@ -6,19 +6,21 @@ import type { Locale } from '@/i18n'
 import { niceTicks, smoothPath } from './scale'
 
 /**
- * Одобрения и отказы по дням.
+ * Approvals and denials by day.
  *
- * Обе серии — счётчики людей, поэтому шкала одна. Второй оси здесь быть
- * не может: два разных нуля на одном поле дают любую нужную «корреляцию».
+ * Both series are counts of people, so there's one shared scale. A second
+ * axis can't happen here: two different zeros on the same plot can produce
+ * any "correlation" you want.
  *
- * Линия непрерывна и идёт через дни без выпуска: DOU выходит по будням,
- * и на выходных публиковать было нечего — отсутствие события, а не
- * отсутствие знания. Точки стоят на своих календарных местах, поэтому
- * длина пролёта через выходные видна наклоном.
+ * The line is continuous and runs through days without an edition: DOU
+ * publishes on weekdays, and on weekends there was nothing to publish:
+ * an absence of the event, not an absence of knowledge. Points sit at
+ * their actual calendar positions, so the length of the span across a
+ * weekend shows up as a slope.
  *
- * День, который не удалось загрузить, — другое дело: там мы просто не
- * знаем, что было. Такие дни помечаются полосой под кривой, чтобы
- * сплошная линия не выдавала пробел в данных за наблюдение.
+ * A day that failed to load is a different matter: there we simply don't
+ * know what happened. Such days are marked with a bar under the curve, so
+ * the solid line doesn't pass off a gap in the data as an observation.
  */
 
 export type SeriesPoint = {
@@ -39,7 +41,7 @@ type Labels = {
   noData: string
 }
 
-/** Геометрия под ширину экрана: на телефоне поле выше и подписей меньше. */
+/** Geometry per screen width: on mobile the plot is taller and has fewer labels. */
 type Geometry = {
   w: number
   h: number
@@ -70,12 +72,12 @@ export function TimeSeriesChart({
   data: SeriesPoint[]
   labels: Labels
 }) {
-  // Индекс активного дня общий для обоих полей: видно всегда только одно,
-  // а состояние переживает смену ширины экрана.
+  // The active-day index is shared between both plots: only one is ever
+  // visible, and the state survives a screen-width change.
   const [active, setActive] = useState<number | null>(null)
 
-  // Предупреждаем только про незагруженные дни. Выходные без выпуска —
-  // не пробел в данных, и оговаривать их нечего.
+  // We only warn about days that failed to load. Weekends without an
+  // edition aren't a gap in the data, and there's nothing to call out about them.
   const hasGap = data.some((p) => p.coverage === 'missing')
   const shown = active !== null && data[active] ? active : lastKnownIndex(data)
   const point = shown === null ? null : data[shown]
@@ -83,9 +85,9 @@ export function TimeSeriesChart({
   return (
     <div>
       {/*
-        Показания вынесены над графиком, а не во всплывающую подсказку под
-        курсором: на телефоне палец закрывает ровно ту точку, о которой
-        подсказка рассказывает.
+        Readouts are placed above the chart rather than in a tooltip under the
+        cursor: on mobile, the finger covers exactly the point the tooltip
+        would be describing.
       */}
       <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
         <span className="font-medium text-ink">
@@ -252,8 +254,8 @@ function Plot({
         )
       })}
 
-      {/* Незагруженные дни: штрих у основания. Кривая над ними проходит
-          сплошной, но полоса показывает, что там ничего не наблюдали. */}
+      {/* Days that failed to load: a tick at the baseline. The curve above them
+          stays solid, but the bar shows that nothing was observed there. */}
       {data.map((p, index) =>
         p.coverage === 'missing' ? (
           <rect
@@ -294,9 +296,9 @@ function Plot({
             key={p.day}
             x={x(index)}
             y={baseline + 16}
-            // Крайние подписи прижимаются к своей стороне: подпись
-            // последнего дня стоит ровно на правой границе поля, и по
-            // центру половина её уходила бы за край кадра.
+            // Edge labels are pinned to their own side: the last day's label
+            // sits right on the plot's right boundary, and centered it would
+            // have half of it running off the edge of the frame.
             textAnchor={index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'}
             className="fill-ink-muted text-[10px] [font-variant-numeric:tabular-nums]"
           >
@@ -305,8 +307,8 @@ function Plot({
         ) : null,
       )}
 
-      {/* Зоны попадания шире марки: на линии толщиной 2px пальцем
-          не прицелиться. */}
+      {/* Hit zones are wider than the marker: you can't aim a finger at a
+          2px-thick line. */}
       {data.map((p, index) => (
         <rect
           key={`hit-${p.day}`}
@@ -337,16 +339,17 @@ function Line({
   y: (value: number) => number
 }) {
   /*
-   * Точки только там, где решения этого вида публиковались.
+   * Points exist only where decisions of this kind were published.
    *
-   * Ноль отбрасывается наравне с пропуском: одобрения выходят portaria,
-   * отказы — despachos, и это разные дни. Ноль отказов в день, когда
-   * despachos не публиковался, означает отсутствие публикации, а не
-   * решение «отказов ноль», и сажать из-за него линию на ось — значит
-   * рисовать провал, которого в предметной области нет.
+   * Zero is dropped the same as a missing value: approvals are published
+   * as portarias, denials as despachos, and those are different days. Zero
+   * denials on a day when no despacho was published means no publication,
+   * not a decision of "zero denials", and dragging the line down to the
+   * axis over it would draw a dip that doesn't exist in the domain.
    *
-   * Точки остаются на своих календарных местах, поэтому длина пролёта
-   * видна наклоном. Точные значения, включая нули, — в таблице ниже.
+   * Points stay at their actual calendar positions, so the length of a
+   * span shows up as a slope. Exact values, including zeros, are in the
+   * table below.
    */
   const points = data
     .map((p, index) => ({ index, value: pick(p) }))
@@ -388,7 +391,7 @@ function Marker({
       cy={y(value)}
       r={4}
       fill={`var(--series-${slot})`}
-      // Кольцо цветом поверхности отделяет марку от линии под ней.
+      // A surface-colored ring separates the marker from the line under it.
       stroke="var(--surface-1)"
       strokeWidth={2}
     />

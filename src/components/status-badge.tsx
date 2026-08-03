@@ -16,8 +16,8 @@ const LABEL_KEY: Record<JobStatus, keyof StatusLabels> = {
 }
 
 /**
- * Статус всегда «иконка + подпись»: цвет один смысл не несёт — часть
- * статусных оттенков не проходит контраст 3:1 на светлой поверхности.
+ * Status is always "icon + label": color alone doesn't carry the meaning.
+ * Some of the status shades don't clear 3:1 contrast on a light surface.
  */
 export function StatusBadge({ status, labels }: { status: JobStatus; labels: StatusLabels }) {
   const { icon, color } = MARK[status]

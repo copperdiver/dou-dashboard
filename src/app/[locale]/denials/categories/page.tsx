@@ -11,11 +11,11 @@ import { resolveRange, today } from '@/lib/range'
 export const dynamic = 'force-dynamic'
 
 /**
- * Сколько категорий показывать, когда выбор не сделан.
+ * How many categories to show when no selection has been made.
  *
- * Восемь линий на одном поле не читаются даже на десктопе, поэтому
- * по умолчанию включены четыре крупнейшие. Остальные не спрятаны —
- * они перечислены рядом и включаются одним нажатием.
+ * Eight lines on one plot aren't readable even on desktop, so the four
+ * largest are shown by default. The rest aren't hidden; they're listed
+ * alongside and toggle on with one click.
  */
 const DEFAULT_VISIBLE = 4
 
@@ -106,11 +106,11 @@ export default async function CategoriesPage({
 }
 
 /**
- * Какие категории показывать.
+ * Which categories to show.
  *
- * Параметр `cats` — явный выбор пользователя. `category` приходит с
- * плитки на сводке: клик по столбику обязан открыть именно эту категорию,
- * а не набор по умолчанию.
+ * The `cats` param is the user's explicit choice. `category` comes from the
+ * tile on the overview: clicking a bar must open that exact category,
+ * not the default set.
  */
 function resolveSelection(search: Search, series: CategorySeries[]): Set<string> {
   const known = new Set(series.map((s) => s.code))
@@ -157,8 +157,8 @@ function Toggles({
     } else if (search.range) {
       query.set('range', search.range)
     }
-    // Пустое значение — осознанный «ничего не выбрано», иначе параметр
-    // исчез бы и вернулся набор по умолчанию.
+    // An empty value is a deliberate "nothing selected", otherwise the
+    // param would disappear and the default set would come back.
     query.set('cats', [...next].join(','))
 
     return `${basePath}?${query.toString()}`

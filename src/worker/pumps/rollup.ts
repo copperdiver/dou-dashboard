@@ -16,23 +16,23 @@ import {
 import type { Pump } from './types'
 
 /**
- * Пересчёт суточных витрин по дням из `dirty_days`.
+ * Recomputes daily dashboards for the days listed in `dirty_days`.
  *
- * Витрины здесь нужны НЕ для скорости: на 14 тыс. одобрений любой график
- * считается за единицы миллисекунд по индексам. Они нужны для трёх других
- * вещей:
+ * These dashboards aren't here for speed: with 14k approvals, any chart
+ * computes in single-digit milliseconds off the indexes. They exist for
+ * three other reasons:
  *
- *  1. Единое определение «нового отказа» — в одном месте, а не размазанное
- *     по семи запросам.
- *  2. Различение «нет данных» и «ноль». День без выпуска и день, который
- *     не удалось загрузить, — это не «ноль одобрений», и `coverage`
- *     берётся из `ingest_days`, а не из фактов.
- *  3. Дрилл-даун «категория × день» без join через три таблицы на каждую
- *     точку графика.
+ *  1. A single definition of "a new denial": in one place, not smeared
+ *     across seven queries.
+ *  2. Distinguishing "no data" from "zero." A day with no edition and a
+ *     day that failed to fetch are not "zero approvals," and `coverage`
+ *     comes from `ingest_days`, not from the facts.
+ *  3. A "category × day" drill-down without a three-table join for every
+ *     point on the chart.
  *
- * Пересчёт дня — удаление и вставка в одной транзакции: идемпотентно
- * и перезапускаемо. Полный ребилд — засеять `dirty_days` нужным
- * диапазоном.
+ * Recomputing a day is a delete-then-insert in one transaction:
+ * idempotent and re-runnable. A full rebuild just means seeding
+ * `dirty_days` with the desired range.
  */
 
 const BATCH = 30
@@ -40,9 +40,9 @@ const BATCH = 30
 type Claim = { day: string }
 
 async function claimDays(limit: number): Promise<Claim[]> {
-  // Захват удалением: строка-маркер и есть единица работы, поэтому
-  // отдельная аренда не нужна — упавший прогон просто потеряет маркер,
-  // а его вернёт следующий parse/canonize.
+  // Claim by deleting: the marker row IS the unit of work, so no separate
+  // lease is needed. A crashed run just loses the marker, and the next
+  // parse/canonize will put it back.
   const result = await db.execute<Claim>(sql`
     with candidates as (
       select day from ${dirtyDays}
@@ -60,9 +60,9 @@ async function claimDays(limit: number): Promise<Claim[]> {
 }
 
 /**
- * Возрастные группы фиксированы в коде: границы должны совпадать
- * с подписями на графике, а их изменение — осознанным событием,
- * а не следствием правки SQL.
+ * Age buckets are fixed in code: the boundaries must match the chart
+ * labels, and changing them should be a deliberate event, not a side
+ * effect of an SQL edit.
  */
 const AGE_BUCKET_SQL = sql`
   case
@@ -87,10 +87,10 @@ export const rollupDays: Pump = async ({ log }) => {
   for (const { day } of claims) {
     await db.transaction(async (tx) => {
       /*
-       * coverage берётся из ingest_days, а не из фактов: иначе
-       * невозможно отличить «в этот день никого не натурализовали»
-       * от «этот день мы не загрузили». Фронтенд по `missing`/`no_edition`
-       * рисует разрыв линии, а не нулевую точку.
+       * coverage comes from ingest_days, not from the facts: otherwise
+       * it's impossible to tell "nobody was naturalized that day" apart
+       * from "we didn't fetch that day." The frontend draws a line gap
+       * for `missing`/`no_edition`, not a zero point.
        */
       const [coverageRow] = await tx.execute<{ coverage: string }>(sql`
         select case
@@ -115,15 +115,15 @@ export const rollupDays: Pump = async ({ log }) => {
         acts: number
       }>(sql`
         select
-          -- Определение «нового одобрения» живёт в counts_as_new_approval:
-          -- повторная публикация той же portaria в него не входит, иначе
-          -- один человек считался бы дважды.
+          -- The definition of "a new approval" lives in counts_as_new_approval:
+          -- a republication of the same portaria doesn't count, otherwise
+          -- one person would be counted twice.
           (select count(*)::int from ${approvals}
             where edition_date = ${day} and retired_at is null
               and counts_as_new_approval)                                            as approvals,
-          -- Определение «нового отказа» живёт в counts_as_new_denial:
-          -- подтверждение при обжаловании и повторная публикация в него
-          -- не входят, иначе статистика удвоилась бы.
+          -- The definition of "a new denial" lives in counts_as_new_denial:
+          -- an appeal confirmation and a republication don't count,
+          -- otherwise the stats would double.
           (select count(*)::int from ${denials}
             where edition_date = ${day} and retired_at is null
               and counts_as_new_denial)                                              as denials_new,
@@ -166,8 +166,8 @@ export const rollupDays: Pump = async ({ log }) => {
       approvalsTotal += totals?.approvals ?? 0
       denialsTotal += totals?.denials_new ?? 0
 
-      // Разрезы: удаление и вставка заново — идемпотентно и не оставляет
-      // строк по измерениям, которые за день исчезли.
+      // Breakdowns: delete and re-insert (idempotent), and doesn't leave
+      // rows for dimensions that disappeared for the day.
       await tx.delete(dailyCountryStats).where(sql`${dailyCountryStats.day} = ${day}`)
       await tx.execute(sql`
         insert into ${dailyCountryStats} (day, country_id, approvals)
@@ -199,10 +199,10 @@ export const rollupDays: Pump = async ({ log }) => {
       `)
 
       /*
-       * Метрика категорий — count(distinct denial_id), а НЕ количество
-       * связей: у отказа бывает до нескольких причин из разных категорий,
-       * поэтому сумма по столбцам не равна числу отказов. Подпись графика
-       * обязана это называть: «отказов, затронутых категорией».
+       * The category metric is count(distinct denial_id), NOT the number
+       * of links: a denial can have several reasons from different
+       * categories, so the sum across columns doesn't equal the number
+       * of denials. The chart label must say so explicitly: "denials touched by category."
        */
       await tx.delete(dailyReasonCategoryStats).where(sql`${dailyReasonCategoryStats.day} = ${day}`)
       await tx.execute(sql`
@@ -219,8 +219,8 @@ export const rollupDays: Pump = async ({ log }) => {
   }
 
   log(
-    `дней ${claims.length}, одобрений ${approvalsTotal}, новых отказов ${denialsTotal}, ` +
-      `дней без покрытия ${missing}`,
+    `days ${claims.length}, approvals ${approvalsTotal}, new denials ${denialsTotal}, ` +
+      `days without coverage ${missing}`,
   )
 
   return {

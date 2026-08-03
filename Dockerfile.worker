@@ -1,9 +1,9 @@
-# Фоновые задачи (сервисы worker и migrate). Запускается через tsx —
-# отдельная сборка TypeScript не нужна, tsx лежит в dependencies.
+# Background jobs (worker and migrate services). Runs via tsx: no
+# separate TypeScript build needed, tsx is a regular dependency.
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-# --omit=dev: drizzle-kit и типы в рантайме воркера не нужны.
+# --omit=dev: drizzle-kit and type packages aren't needed at worker runtime.
 RUN npm ci --omit=dev
 
 FROM node:24-alpine AS runner
@@ -20,5 +20,5 @@ RUN addgroup -g 1001 -S nodejs \
  && chown -R worker:nodejs /app
 USER worker
 
-# Напрямую через tsx, без обёртки npm: чище логи и корректная передача SIGTERM.
+# Runs tsx directly, no npm wrapper: cleaner logs and SIGTERM passes through correctly.
 CMD ["./node_modules/.bin/tsx", "src/worker/index.ts"]

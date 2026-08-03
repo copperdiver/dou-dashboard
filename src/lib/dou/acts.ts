@@ -2,13 +2,14 @@ import { sha256Hex, stripDiacritics } from '../text'
 import type { Block } from './page'
 
 /**
- * Разбиение страницы на акты и классификация каждого ПО СОДЕРЖИМОМУ.
+ * Splits a page into acts and classifies each one BY CONTENT.
  *
- * Заголовкам доверять нельзя: наблюдались `PORTARIA Nº 6.824, DE 28 DE
- * JULHO DE 2026`, `PORTARIA 6.375` без `Nº`, `DESPACHOS`, `Despachos`,
- * `DESPACHO Nº 391/DNN_Naturalizacao_Proc/...`, месяцы в разном регистре.
- * Поле artType из индекса (Portaria/Despacho/Ato) тоже недостаточно:
- * одобрение встречается внутри despacho как `Assunto: Deferimento`.
+ * Headers can't be trusted: observed forms include `PORTARIA Nº 6.824, DE
+ * 28 DE JULHO DE 2026`, `PORTARIA 6.375` without `Nº`, `DESPACHOS`,
+ * `Despachos`, `DESPACHO Nº 391/DNN_Naturalizacao_Proc/...`, months in
+ * varying case. The index's `artType` field (Portaria/Despacho/Ato) isn't
+ * enough either: an approval can show up inside a despacho as
+ * `Assunto: Deferimento`.
  */
 
 export type ActKind =
@@ -26,36 +27,36 @@ export type ParsedAct = {
   identifica: string | null
   kind: ActKind
   naturalizationType: NaturalizationType | null
-  /** Правовые ссылки как контекст: 'art.65', 'art.234'. */
+  /** Legal references as context: 'art.65', 'art.234'. */
   legalBasis: string[]
   paragraphs: string[]
   bodySha256: string
 }
 
-/** Одобрение: ключевой маркер, встречается в 27 из 27 актов-одобрений. */
+/** Approval: the key marker, present in 27 of 27 approval acts. */
 const GRANT_PATTERN = /CONCEDER\s+a\s+nacionalidade\s+brasileira/i
 
 /**
- * Структура блока решения. Обязателен `Código` или `Assunto` — по одному
- * `Processo:` судить нельзя: разрешения на работу оформлены так же
- * (`Processo: … Requerente: … LTDA Prazo: 2 Anos Imigrante: …`) и попали
- * бы в отказы 548 фантомными блоками.
+ * Structure of a decision block. `Código` or `Assunto` is required.
+ * `Processo:` alone isn't enough to tell: work permits are formatted the
+ * same way (`Processo: … Requerente: … LTDA Prazo: 2 Anos Imigrante: …`)
+ * and would end up in denials as 548 phantom blocks.
  */
 const DENIAL_LABEL_PATTERN = /^(?:C[oó]digo|Assunto)\s*:/i
 
 /**
- * Разрешение на работу: та же иерархия департамента, но не натурализация.
- * Отсекается и здесь, и в фильтре релевантности — независимо от того,
- * под каким заголовком опубликовано.
+ * Work permit: same department hierarchy, but not naturalization.
+ * Filtered out both here and in the relevance filter, regardless of
+ * which header it's published under.
  */
 const WORK_PERMIT_PATTERN = /\bRequerente\s*:|\bImigrante\s*:|\bPrazo\s*:\s*\d+\s*Ano/i
 
 const LOSS_PATTERN = /perda\s+da\s+nacionalidade/i
 
 /**
- * Смена имени: `CERTIFICO ainda que, X passou a assinar Y, natural de
- * Portugal, nascida a 30 de julho de 1959, ...`. Ловушка для наивного
- * парсера — строка выглядит как строка одобрения.
+ * Name change: `CERTIFICO ainda que, X passou a assinar Y, natural de
+ * Portugal, nascida a 30 de julho de 1959, ...`. A trap for a naive
+ * parser: the line looks like an approval line.
  */
 const NAME_CHANGE_PATTERN = /passou\s+a\s+assinar/i
 
@@ -64,7 +65,7 @@ const REVOCATION_PATTERN = /tornar\s+sem\s+efeito/i
 function classify(paragraphs: readonly string[]): ActKind {
   const joined = paragraphs.join('\n')
 
-  // Порядок важен: сначала однозначные маркеры существа акта.
+  // Order matters: unambiguous markers of the act's substance come first.
   if (GRANT_PATTERN.test(joined)) return 'approval'
   if (WORK_PERMIT_PATTERN.test(joined)) return 'other'
   if (paragraphs.some((p) => DENIAL_LABEL_PATTERN.test(p))) return 'denial_list'
@@ -76,11 +77,11 @@ function classify(paragraphs: readonly string[]): ActKind {
 }
 
 /**
- * Ссылки на статьи Закона 13.445/2017 и Декрета 9.199/2017.
- * Хранятся как контекст, а НЕ как причина: `art. 65` встречается в 74%
- * текстов отказа, и будь он причиной, крупнейшая категория графика была
- * бы пустой по смыслу. Смысл несёт номер inciso — его разбирает
- * канонизатор причин.
+ * References to articles of Lei 13.445/2017 and Decreto 9.199/2017.
+ * Stored as context, NOT as a reason: `art. 65` appears in 74% of denial
+ * texts, and if it were treated as a reason, the chart's largest category
+ * would be meaningless. The actual meaning is carried by the inciso
+ * number, which is parsed by the reason canonizer.
  */
 export function extractLegalBasis(text: string): string[] {
   const found = new Set<string>()
@@ -91,8 +92,8 @@ export function extractLegalBasis(text: string): string[] {
 }
 
 /**
- * Вид натурализации по правовому основанию. Замер: art.65 — 14 актов
- * (обычная), art.70 — 8 (временная), art.67 — 6 (экстраординарная).
+ * Naturalization type by legal basis. Measured: art.65, 14 acts
+ * (ordinary); art.70, 8 (provisional); art.67, 6 (extraordinary).
  */
 function naturalizationTypeOf(text: string, legalBasis: readonly string[]): NaturalizationType | null {
   const normalized = stripDiacritics(text).toLowerCase()
@@ -108,11 +109,11 @@ function naturalizationTypeOf(text: string, legalBasis: readonly string[]): Natu
 }
 
 /**
- * Режет блоки на акты по `identifica`.
+ * Cuts blocks into acts on `identifica`.
  *
- * Блоки до первого заголовка — шапка органа; если заголовков нет вовсе,
- * вся страница считается одним актом (наблюдалось на страницах с одним
- * despacho).
+ * Blocks before the first header are the issuing body's letterhead; if
+ * there are no headers at all, the whole page counts as one act
+ * (observed on pages with a single despacho).
  */
 export function splitActs(blocks: readonly Block[]): ParsedAct[] {
   const groups: { identifica: string | null; paragraphs: string[] }[] = []

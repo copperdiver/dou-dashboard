@@ -15,20 +15,21 @@ import {
 import { normalizeName } from '../text'
 
 /**
- * Фиды одобрений и отказов.
+ * Approval and denial feeds.
  *
- * Пагинация — keyset по `(edition_date desc, id desc)`, ровно по составным
- * индексам `approvals_feed_idx` и `denials_feed_idx`. Смещением (offset)
- * это делать нельзя: страницы фида листают вглубь истории, и на десятой
- * странице СУБД перечитывала бы всё начало заново, а вставка свежего дня
- * сдвигала бы границу и дублировала записи на стыке.
+ * Pagination is keyset-based on `(edition_date desc, id desc)`, exactly
+ * matching the composite indexes `approvals_feed_idx` and
+ * `denials_feed_idx`. Offset pagination won't work here: feed pages page
+ * deep into history, and on page ten the DB would reread the whole
+ * beginning again, while inserting a fresh day would shift the boundary
+ * and duplicate records at the seam.
  */
 
 export const PAGE_SIZE = 25
 
 export type Cursor = { day: string; id: string }
 
-/** Курсор в адресе: `YYYY-MM-DD_uuid`. */
+/** Cursor in the URL: `YYYY-MM-DD_uuid`. */
 export function parseCursor(raw: string | undefined): Cursor | null {
   if (!raw) return null
   const separator = raw.indexOf('_')
@@ -47,17 +48,18 @@ export function formatCursor(cursor: Cursor): string {
 
 export type Page<T> = {
   items: T[]
-  /** Курсор следующей страницы. null — дальше ничего нет. */
+  /** Cursor for the next page. null means there's nothing further. */
   next: string | null
 }
 
 /**
- * Условие поиска по имени.
+ * Search condition for name matching.
  *
- * Ключ строится тем же `normalizeName`, которым заполнена колонка
- * `name_norm` при записи: две реализации нормализации неизбежно разошлись
- * бы, и поиск начал бы терять записи с диакритикой. `like '%…%'` здесь
- * не приводит к перебору — он обслуживается триграммным gin-индексом.
+ * The key is built with the same `normalizeName` used to fill the
+ * `name_norm` column on write: two normalization implementations would
+ * inevitably diverge, and search would start losing records with
+ * diacritics. `like '%…%'` here doesn't cause a full scan: it's served
+ * by the trigram gin index.
  */
 function nameFilter(column: string, query: string | undefined) {
   const normalized = query ? normalizeName(query) : ''
@@ -65,7 +67,7 @@ function nameFilter(column: string, query: string | undefined) {
   return sql` and ${sql.raw(column)} like ${'%' + normalized + '%'}`
 }
 
-/* ── Одобрения ─────────────────────────────────────────────────────────── */
+/* ── Approvals ─────────────────────────────────────────────────────────── */
 
 export type ApprovalItem = {
   id: string
@@ -119,8 +121,8 @@ export async function getApprovals(
       left join ${brStates} s on s.id = a.state_id
       join ${sourcePages} p on p.id = a.page_id
      where a.retired_at is null
-       -- Повторные публикации той же portaria отсекаются: иначе один
-       -- человек появлялся бы в фиде несколько раз.
+       -- Republications of the same portaria are excluded: otherwise
+       -- one person would appear in the feed multiple times.
        and a.counts_as_new_approval
        ${filters.country ? sql` and c.iso2 = ${filters.country}` : sql``}
        ${filters.state ? sql` and s.uf = ${filters.state}` : sql``}
@@ -149,7 +151,7 @@ export async function getApprovals(
   )
 }
 
-/* ── Отказы ────────────────────────────────────────────────────────────── */
+/* ── Denials ───────────────────────────────────────────────────────────── */
 
 export type DenialReasonItem = {
   categoryId: number
@@ -169,7 +171,7 @@ export type DenialItem = {
   decisionKind: string
   isUpheld: boolean
   isRepublication: boolean
-  /** Есть ли ссылка на первичное решение: подтверждение без неё оговаривается. */
+  /** Whether there's a link to the primary decision: an upheld denial without one is called out. */
   hasPrimary: boolean
   sourceUrl: string
   reasons: DenialReasonItem[]
@@ -178,7 +180,7 @@ export type DenialItem = {
 export type DenialFilters = {
   category?: string
   q?: string
-  /** Показывать подтверждения отказа и прочие решения. */
+  /** Show upheld denials and other decisions. */
   includeUpheld?: boolean
 }
 
@@ -241,11 +243,12 @@ export async function getDenials(
 }
 
 /**
- * Причины для показанной страницы отказов — отдельным запросом.
+ * Reasons for the displayed page of denials. A separate query.
  *
- * Присоединять их к основному запросу нельзя: у отказа до нескольких
- * причин, строки размножились бы, и `limit` отрезал бы не по записям,
- * а по связям — страница получилась бы короче заявленной.
+ * They can't be joined into the main query: a denial can have several
+ * reasons, so rows would multiply and `limit` would cut off by
+ * relations, not records, and the page would come out shorter than
+ * requested.
  */
 async function getReasonsFor(ids: string[]): Promise<Map<string, DenialReasonItem[]>> {
   const result = new Map<string, DenialReasonItem[]>()
@@ -289,13 +292,13 @@ async function getReasonsFor(ids: string[]): Promise<Map<string, DenialReasonIte
   return result
 }
 
-/* ── Справочники для фильтров ──────────────────────────────────────────── */
+/* ── Reference lists for filters ───────────────────────────────────────── */
 
 export type CountryOption = { iso2: string; nameRu: string; nameEn: string; approvals: number }
 
 /**
- * Страны, встречающиеся в одобрениях, — частые первыми.
- * Список из 95 позиций по алфавиту заставлял бы искать Гаити в конце.
+ * Countries appearing in approvals, most frequent first.
+ * A 95-entry alphabetical list would make you hunt for Haiti at the end.
  */
 export async function getCountryOptions(): Promise<CountryOption[]> {
   const { rows } = await db.execute<{
@@ -368,8 +371,8 @@ export async function getCategoryOptions(): Promise<CategoryOption[]> {
 }
 
 /**
- * Берём на одну запись больше запрошенного: лишняя строка отвечает на
- * вопрос «есть ли следующая страница» без второго запроса с count.
+ * We fetch one record more than requested: the extra row answers the
+ * "is there a next page" question without a second count query.
  */
 function paginate<T extends { edition_date?: string; editionDate?: string; id: string }>(
   rows: T[],

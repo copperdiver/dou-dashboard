@@ -1,13 +1,13 @@
 /**
- * Реестр насосов и их расписание.
+ * Registry of pumps and their schedule.
  *
- * Каждая задача — идемпотентный насос: забирает пачку работы из Postgres,
- * обрабатывает и завершается. Прогресс живёт в таблицах (`ingest_days`,
- * `source_pages`), а не в Redis, поэтому перезапуск воркера или очистка
- * очередей не рушат бэкфилл на 250 дней.
+ * Each job is an idempotent pump: it grabs a batch of work from Postgres,
+ * processes it, and finishes. Progress lives in tables (`ingest_days`,
+ * `source_pages`), not in Redis, so restarting the worker or flushing
+ * the queues doesn't break the 250-day backfill.
  *
- * Чтобы добавить насос: описать его в SCHEDULE и добавить обработчик
- * в handlers под тем же именем. Расписание синхронизируется при старте.
+ * To add a pump: describe it in SCHEDULE and add a handler in handlers
+ * under the same name. The schedule is synced on startup.
  */
 import { canonizeReasons } from './pumps/canonize'
 import { discover } from './pumps/discover'
@@ -22,9 +22,9 @@ import type { QueueKey } from './queue'
 
 export type ScheduledJob = {
   name: string
-  /** В какой очереди исполняется: от этого зависят лимиты и concurrency. */
+  /** Which queue it runs in: this determines its limits and concurrency. */
   queue: QueueKey
-  /** Cron-выражение в часовом поясе процесса (см. TZ в .env). */
+  /** Cron expression in the process's timezone (see TZ in .env). */
   pattern: string
   description: string
 }
@@ -34,63 +34,63 @@ export const SCHEDULE: readonly ScheduledJob[] = [
     name: 'heartbeat',
     queue: 'jobs',
     pattern: '*/5 * * * *',
-    description: 'Пульс: проверяет, что воркер и БД живы',
+    description: 'Heartbeat: checks that the worker and DB are alive',
   },
   {
     name: 'discover',
     queue: 'jobs',
     pattern: '0 6,14 * * *',
-    description: 'Ставит в очередь дни за последнюю неделю',
+    description: 'Queues days from the past week',
   },
   {
     name: 'enumerate',
     queue: 'fetch',
     pattern: '*/10 * * * *',
-    description: 'Дневной индекс DOU → снапшот и список статей',
+    description: 'DOU daily index → snapshot and article list',
   },
   {
     name: 'fetch',
     queue: 'fetch',
     pattern: '*/5 * * * *',
-    description: 'Загрузка страниц статей',
+    description: 'Downloads article pages',
   },
   {
     name: 'parse',
     queue: 'jobs',
     pattern: '*/5 * * * *',
-    description: 'Разбор страниц: акты, люди, решения',
+    description: 'Parses pages: acts, people, decisions',
   },
   {
     name: 'canonize',
     queue: 'jobs',
     pattern: '*/5 * * * *',
-    description: 'Канонизация причин отказа правилами',
+    description: 'Rule-based canonization of denial reasons',
   },
   {
     name: 'enrich',
     queue: 'llm',
     pattern: '*/10 * * * *',
-    description: 'Обогащение остатка причин через LLM',
+    description: 'LLM enrichment of the remaining reasons',
   },
   {
     name: 'link-appeals',
     queue: 'jobs',
-    // Ночью: пересчёт полный по всей истории, и связь меняется только
-    // при появлении новых решений, то есть раз в несколько дней.
+    // At night: this is a full recompute over the whole history, and the
+    // link only changes when new decisions show up, i.e. every few days.
     pattern: '23 2 * * *',
-    description: 'Связь подтверждений отказа с первичными и повторные публикации',
+    description: 'Links denial confirmations to primary decisions and marks republications',
   },
   {
     name: 'rollup',
     queue: 'jobs',
     pattern: '*/5 * * * *',
-    description: 'Пересчёт суточных витрин по затронутым дням',
+    description: 'Recomputes daily dashboards for affected days',
   },
 ] as const
 
 export const handlers: Record<string, Pump> = {
   async heartbeat({ log }) {
-    log('пульс')
+    log('heartbeat')
     return { itemsProcessed: 1 }
   },
   discover,

@@ -4,29 +4,29 @@ import { approvals, denials, dirtyDays } from '../../db/schema'
 import type { Pump } from './types'
 
 /**
- * Связывает подтверждения отказа с первичными решениями и помечает
- * повторные публикации.
+ * Links denial confirmations to their primary decisions and flags
+ * republications.
  *
- * Обе величины нужны, чтобы статистика не считала одно решение дважды:
+ * Both values exist so statistics don't count one decision twice:
  *
- *  - `is_upheld` (`Manutenção de Indeferimento`) — подтверждение прежнего
- *    отказа при обжаловании. `appeal_of_id` показывает, какого именно.
- *  - `is_republication` — то же решение по тому же процессу, уже
- *    опубликованное раньше. Наблюдалось: процесс 235881.0729052/2026
- *    вышел как `indeferimento` 24, 27 и 29 июля.
+ *  - `is_upheld` (`Manutenção de Indeferimento`): confirmation of a
+ *    prior denial on appeal. `appeal_of_id` points to which one.
+ *  - `is_republication`: the same decision for the same process,
+ *    already published earlier. Observed: process 235881.0729052/2026
+ *    came out as `indeferimento` on July 24, 27, and 29.
  *
- * Пересчёт полный, а не инкрементальный: связь зависит от ВСЕЙ истории
- * (первичное решение могло быть опубликовано за месяцы до подтверждения),
- * а объём — десятки тысяч строк, то есть считается дешевле, чем стоило бы
- * отслеживать зависимости. В `dirty_days` попадают только дни, где
- * значение реально изменилось, иначе rollup молотил бы всю историю
- * на каждом тике.
+ * The recompute is full, not incremental: the link depends on the
+ * ENTIRE history (the primary decision could have been published
+ * months before the confirmation), and the volume (tens of thousands
+ * of rows) is cheaper to compute than it would be to track
+ * dependencies. Only days where the value actually changed land in
+ * `dirty_days`, otherwise rollup would grind through the whole history on every tick.
  */
 
 /**
- * Связь только по номеру процесса. Сопоставление по имени сознательно
- * не делается: тёзки в выборке на 837 блоков уже встречались, и ложная
- * связь между отказами разных людей хуже отсутствующей связи.
+ * Linked by process number only. Matching by name is deliberately not
+ * done: namesakes have already shown up in a sample of 837 blocks, and
+ * a false link between two different people's denials is worse than a missing link.
  */
 async function linkAppeals(): Promise<string[]> {
   const result = await db.execute<{ edition_date: string }>(sql`
@@ -62,11 +62,11 @@ async function linkAppeals(): Promise<string[]> {
 }
 
 /**
- * Повторная публикация: то же решение по тому же процессу, вышедшее ранее.
+ * Republication: the same decision for the same process, published earlier.
  *
- * Раздел включает `is_upheld`: без него подтверждение отказа считалось бы
- * повторной публикацией первичного решения, хотя это разные решения
- * с одинаковым `decision_kind`.
+ * The partition includes `is_upheld`: without it, a denial confirmation
+ * would count as a republication of the primary decision, even though
+ * they're different decisions sharing the same `decision_kind`.
  */
 async function markRepublications(): Promise<string[]> {
   const result = await db.execute<{ edition_date: string }>(sql`
@@ -92,11 +92,12 @@ async function markRepublications(): Promise<string[]> {
 }
 
 /**
- * Пересчёт материализованного флага «считается новым отказом».
+ * Recomputes the materialized "counts as a new denial" flag.
  *
- * Определение живёт здесь и в парсере одним выражением. Держать его
- * материализованным, а не вычислять в каждом запросе, — сознательный
- * выбор: иначе условие размазалось бы по всем витринам и фидам.
+ * The definition lives here and in the parser as a single expression.
+ * Keeping it materialized rather than computing it in every query is a
+ * deliberate choice: otherwise the condition would be smeared across
+ * every dashboard and feed.
  */
 async function recomputeCounts(): Promise<string[]> {
   const result = await db.execute<{ edition_date: string }>(sql`
@@ -122,19 +123,19 @@ async function recomputeCounts(): Promise<string[]> {
 }
 
 /**
- * Повторные публикации одобрений.
+ * Republications of approvals.
  *
- * Зеркало `markRepublications` для отказов: DOU публикует одну и ту же
- * portaria дважды под разными идентификаторами и в разные дни выпуска.
- * Наблюдалось: процесс 235881.0396673/2023 (BRIGILIEN BRIGIL) вышел
- * трижды, причём дважды это была одна и та же portaria № 6.738 от 2 июля.
+ * Mirrors `markRepublications` for denials: DOU publishes the same
+ * portaria twice under different identifiers and on different edition
+ * days. Observed: process 235881.0396673/2023 (BRIGILIEN BRIGIL) came
+ * out three times, two of which were the same portaria No. 6,738 from July 2.
  *
- * Сопоставление только по номеру процесса, как и у отказов: связывать по
- * именам нельзя из-за тёзок, а ложное объединение двух разных людей хуже
- * пропущенного дубля.
+ * Matched by process number only, same as denials: linking by name
+ * doesn't work because of namesakes, and falsely merging two different
+ * people is worse than missing a duplicate.
  *
- * Записи без номера процесса не трогаются: у них нет надёжного ключа,
- * и считать их повторами по совпадению имени было бы догадкой.
+ * Records with no process number are left untouched: they have no
+ * reliable key, and treating them as duplicates on a name match would be a guess.
  */
 async function markApprovalRepublications(): Promise<string[]> {
   const result = await db.execute<{ edition_date: string }>(sql`
@@ -159,7 +160,7 @@ async function markApprovalRepublications(): Promise<string[]> {
   return result.rows.map((r) => r.edition_date)
 }
 
-/** Пересчёт материализованного флага «считается новым одобрением». */
+/** Recomputes the materialized "counts as a new approval" flag. */
 async function recomputeApprovalCounts(): Promise<string[]> {
   const result = await db.execute<{ edition_date: string }>(sql`
     update ${approvals} a
@@ -175,11 +176,11 @@ async function recomputeApprovalCounts(): Promise<string[]> {
 export const linkAppealsAndRepublications: Pump = async ({ log }) => {
   const republications = await markRepublications()
   const appeals = await linkAppeals()
-  // Порядок важен: флаг «нового отказа» зависит от is_republication,
-  // поэтому пересчитывается последним.
+  // Order matters: the "new denial" flag depends on is_republication,
+  // so it's recomputed last.
   const counts = await recomputeCounts()
 
-  // То же самое для одобрений — тем же порядком и по той же причине.
+  // Same for approvals: same order, same reason.
   const approvalRepublications = await markApprovalRepublications()
   const approvalCounts = await recomputeApprovalCounts()
 
@@ -203,10 +204,10 @@ export const linkAppealsAndRepublications: Pump = async ({ log }) => {
       })
   }
 
-  // Сколько подтверждений так и осталось без первичного решения —
-  // это НЕ ошибка: первичный отказ мог выйти до начала наблюдения.
-  // На 20 подряд идущих днях ни одно из 31 подтверждения не имело
-  // первичного решения в окне.
+  // How many confirmations are still left without a primary decision.
+  // This is NOT an error: the primary denial could have been published
+  // before the observation window started. Over 20 consecutive days,
+  // none of the 31 confirmations had a primary decision within the window.
   const [orphans] = await db
     .execute<{ orphans: number; upheld: number }>(sql`
       select
@@ -218,11 +219,11 @@ export const linkAppealsAndRepublications: Pump = async ({ log }) => {
     .then((r) => r.rows)
 
   log(
-    `повторных публикаций изменено ${republications.length}, ` +
-      `апелляций связано ${appeals.length}, флагов пересчитано ${counts.length}, ` +
-      `повторов одобрений ${approvalRepublications.length}, ` +
-      `флагов одобрений ${approvalCounts.length}, ` +
-      `подтверждений без первичного решения ${orphans?.orphans ?? 0} из ${orphans?.upheld ?? 0}`,
+    `republications changed ${republications.length}, ` +
+      `appeals linked ${appeals.length}, flags recomputed ${counts.length}, ` +
+      `approval republications ${approvalRepublications.length}, ` +
+      `approval flags ${approvalCounts.length}, ` +
+      `confirmations without a primary decision ${orphans?.orphans ?? 0} of ${orphans?.upheld ?? 0}`,
   )
 
   return {

@@ -21,8 +21,8 @@ import { ageOn, normalizeCountryName, normalizeKey, normalizeName, sha256Hex } f
 import type { Pump } from './types'
 
 /**
- * Версия парсера. Увеличивать при изменении правил разбора: страницы
- * с меньшим значением будут переразобраны автоматически.
+ * Parser version. Bump it when parsing rules change: pages with a lower
+ * value will be re-parsed automatically.
  */
 export const PARSER_VERSION = 1
 
@@ -35,14 +35,14 @@ type Claim = {
 }
 
 /**
- * Захват страниц под разбор.
+ * Claims pages for parsing.
  *
- * Захват ОБЯЗАН менять строку. Одного `for update skip locked` мало:
- * блокировка снимается с концом запроса, и два параллельных насоса берут
- * одни и те же страницы — наблюдалось на практике, один прогон записал
- * данные, второй упал на уникальном индексе. Поэтому статус переводится
- * в `running` с арендой по `parsed_at`: упавший процесс не держит
- * страницу дольше аренды.
+ * The claim MUST modify the row. `for update skip locked` alone isn't
+ * enough: the lock is released once the query ends, and two parallel
+ * pumps would pick up the same pages: observed in practice, one run
+ * wrote the data, the other failed on a unique index. That's why the
+ * status moves to `running` with a lease via `parsed_at`: a crashed
+ * process doesn't hold onto a page past its lease.
  */
 async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
   const claimed = await db.execute<{ id: string }>(sql`
@@ -51,9 +51,8 @@ async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
       from ${sourcePages}
       where fetch_status = 'fetched'
         and parser_version < ${PARSER_VERSION}
-        -- Страница, только что упавшая на разборе, ждёт своей отсрочки:
-        -- иначе одна отравленная страница возвращалась бы в каждую пачку
-        -- и вытесняла исправные.
+        -- A page that just failed parsing waits out its backoff: otherwise
+        -- one poisoned page would come back in every batch and crowd out healthy ones.
         and (parse_next_attempt_at is null or parse_next_attempt_at < now())
         and (
           parse_status <> 'running'
@@ -92,13 +91,13 @@ async function claimPages(limit: number, leaseMs: number): Promise<Claim[]> {
 }
 
 /**
- * Освобождает захват после сбоя разбора и назначает отсрочку.
+ * Releases the claim after a parse failure and schedules a backoff.
  *
- * Отсрочка растёт вдвое с каждой попыткой, как у загрузки: причина сбоя
- * может быть временной (нехватка места, недоступный справочник), и долбить
- * страницу каждые пять минут незачем. После `maxAttempts` страница
- * переводится в `failed` и больше не берётся — иначе она вечно занимала бы
- * место в пачке.
+ * The backoff doubles with each attempt, same as fetching: the failure
+ * cause might be transient (disk space, an unreachable lookup table), and
+ * there's no point hammering the page every five minutes. After
+ * `maxAttempts` the page moves to `failed` and is no longer picked up.
+ * Otherwise it would forever occupy a slot in the batch.
  */
 async function releaseParseClaim(
   claim: Claim,
@@ -122,11 +121,11 @@ async function releaseParseClaim(
 }
 
 /**
- * Оставляет по одной строке на ключ, сохраняя порядок.
+ * Keeps one row per key, preserving order.
  *
- * Нужна перед `insert ... on conflict`: две строки с одинаковым ключом
- * в одном запросе Postgres не принимает вовсе, и падает весь INSERT,
- * а не лишняя строка.
+ * Needed before `insert ... on conflict`: Postgres rejects an entire
+ * INSERT outright if it contains two rows with the same key: not just
+ * the extra row, the whole statement fails.
  */
 function dedupeBy<T>(rows: T[], key: (row: T) => string | number): T[] {
   const seen = new Set<string | number>()
@@ -138,7 +137,7 @@ function dedupeBy<T>(rows: T[], key: (row: T) => string | number): T[] {
   })
 }
 
-/** Справочники читаются один раз на прогон, а не на строку. */
+/** Lookup tables are read once per run, not once per row. */
 async function loadLookups(): Promise<{
   countries: Map<string, number>
   states: Map<string, number>
@@ -155,12 +154,12 @@ async function loadLookups(): Promise<{
 }
 
 /**
- * Разбирает загруженные страницы: акты, людей, блоки решений.
+ * Parses fetched pages: acts, people, decision blocks.
  *
- * Переразбор не удаляет детей, а сопоставляет их по хешу абзаца и
- * `codigo`: иначе при росте PARSER_VERSION терялись бы идентификаторы
- * и ручные правки. Пропавшие записи помечаются retired_at, а не
- * удаляются физически.
+ * Re-parsing doesn't delete children, it matches them by paragraph hash
+ * and `codigo`: otherwise bumping PARSER_VERSION would lose identifiers
+ * and manual edits. Records that disappear are flagged with retired_at,
+ * not physically deleted.
  */
 export const parsePages: Pump = async ({ log }) => {
   const { fetchBatch, claimLeaseMs, maxAttempts } = pipelineConfig()
@@ -182,18 +181,18 @@ export const parsePages: Pump = async ({ log }) => {
     const blocks = extractBlocks(claim.html)
 
     if (blocks.length === 0) {
-      // Тело есть, а текстовых блоков нет — разметка изменилась.
+      // There's a body but no text blocks: markup changed.
       schemaMismatch += 1
       await db
         .update(sourcePages)
         .set({
           parseStatus: 'schema_mismatch',
-          parseError: 'нет блоков identifica/dou-paragraph',
+          parseError: 'no identifica/dou-paragraph blocks',
           parserVersion: PARSER_VERSION,
           parsedAt: new Date(),
         })
         .where(eq(sourcePages.id, claim.id))
-      log(`${claim.urlTitle}: РАЗМЕТКА ИЗМЕНИЛАСЬ — нет текстовых блоков`)
+      log(`${claim.urlTitle}: MARKUP CHANGED (no text blocks)`)
       continue
     }
 
@@ -202,8 +201,8 @@ export const parsePages: Pump = async ({ log }) => {
 
     try {
       await db.transaction(async (tx) => {
-        // Акты пересоздаются: их дети (люди, решения) висят на act_id
-        // и восстанавливаются в этой же транзакции по своим ключам.
+        // Acts are recreated: their children (people, decisions) hang off
+        // act_id and get reattached in the same transaction by their own keys.
         const actIds: string[] = []
 
         for (const act of parsedActs) {
@@ -260,8 +259,8 @@ export const parsePages: Pump = async ({ log }) => {
                   countryId,
                   birthDate: person.birthDate,
                   birthDateRaw: person.birthDateRaw,
-                  // Возраст считается от даты выпуска, а не от now():
-                  // при переразборе значение должно остаться тем же.
+                  // Age is computed from the edition date, not from now():
+                  // it must stay the same value on re-parse.
                   ageAtPublication: person.birthDate
                     ? ageOn(person.birthDate, claim.editionDate)
                     : null,
@@ -282,14 +281,14 @@ export const parsePages: Pump = async ({ log }) => {
 
               await tx
                 .insert(approvals)
-                // Дедупликация по ключу конфликта обязательна: если один
-                // INSERT ... ON CONFLICT содержит две строки с одинаковым
-                // ключом, Postgres отвергает весь запрос («cannot affect
-                // row a second time»). Источник такое печатает: в выпуске
-                // от 06.04.2026 MANA ULYSSE и SADRACK HERMILUS повторены
-                // внутри одного акта побайтово. Ключ здесь — хеш абзаца,
-                // поэтому отбрасывается заведомо тот же текст, а не
-                // однофамилец.
+                // Dedup by conflict key is mandatory: if one
+                // INSERT ... ON CONFLICT contains two rows with the same
+                // key, Postgres rejects the whole statement ("cannot
+                // affect row a second time"). The source actually does
+                // this: in the 04/06/2026 edition, MANA ULYSSE and
+                // SADRACK HERMILUS are repeated byte-for-byte within the
+                // same act. The key here is the paragraph hash, so what
+                // gets dropped is provably the same text, not a namesake.
                 .values(dedupeBy(values, (v) => v.paragraphSha256))
                 .onConflictDoUpdate({
                   target: [approvals.actId, approvals.paragraphSha256],
@@ -315,11 +314,11 @@ export const parsePages: Pump = async ({ log }) => {
 
             if (parsed.length > 0) {
               /*
-               * Текст причины дедуплицируется в reason_texts: одинаковые
-               * тексты канонизируются и уходят в LLM один раз, а не по
-               * разу на каждый отказ (замер: 267 отказов → 203 текста).
-               * Здесь считается только дешёвый ключ, без правил, поэтому
-               * рост RULES_VERSION не требует переразбора страниц.
+               * Reason text is deduplicated in reason_texts: identical
+               * texts are canonized and sent to the LLM once, not once
+               * per denial (measured: 267 denials → 203 texts). Only a
+               * cheap key is computed here, no rules, so bumping
+               * RULES_VERSION doesn't require re-parsing pages.
                */
               const textIdByHash = new Map<string, string>()
               for (const denial of parsed) {
@@ -337,10 +336,10 @@ export const parsePages: Pump = async ({ log }) => {
                     normSha256: hash,
                     occurrences: 1,
                   })
-                  // rules_version при повторной встрече не сбрасывается:
-                  // иначе уже канонизированный текст переразбирался бы вечно.
-                  // occurrences здесь не трогаем — он пересчитывается ниже
-                  // из фактических связей.
+                  // rules_version isn't reset on a repeat occurrence:
+                  // otherwise an already-canonized text would get re-parsed forever.
+                  // occurrences is left untouched here: it's recomputed
+                  // below from the actual links.
                   .onConflictDoUpdate({
                     target: reasonTexts.normSha256,
                     set: { textRaw: sql`${reasonTexts.textRaw}` },
@@ -360,8 +359,8 @@ export const parsePages: Pump = async ({ log }) => {
                 decisionKind: denial.decisionKind,
                 isUpheld: denial.isUpheld,
                 subjectKind: denial.subjectKind,
-                // Повторную публикацию выставляет отдельный насос
-                // link-appeals: для этого нужна вся история, а не одна страница.
+                // Republication is set by a separate pump, link-appeals:
+                // that needs the whole history, not just one page.
                 isRepublication: false,
                 countsAsNewDenial:
                   denial.decisionKind === 'denial' &&
@@ -380,8 +379,8 @@ export const parsePages: Pump = async ({ log }) => {
 
               await tx
                 .insert(denials)
-                // Та же защита, что и у одобрений: ключ конфликта здесь —
-                // порядковый номер блока внутри акта.
+                // Same protection as for approvals: the conflict key here
+                // is the block's ordinal position within the act.
                 .values(dedupeBy(values, (v) => v.blockOrdinal))
                 .onConflictDoUpdate({
                   target: [denials.actId, denials.blockOrdinal],
@@ -405,11 +404,11 @@ export const parsePages: Pump = async ({ log }) => {
               denialsTotal += values.length
 
               /*
-               * occurrences — производная величина, а не счётчик приращений.
-               * Инкремент здесь давал бы неверное число дважды: внутри
-               * страницы один текст встречается у нескольких отказов, а при
-               * переразборе прибавка легла бы поверх старой. Пересчёт из
-               * фактических связей всегда верен и идемпотентен.
+               * occurrences is a derived value, not an increment counter.
+               * Incrementing here would produce a wrong number twice: within
+               * a page, one text occurs across multiple denials, and on
+               * re-parse the increment would stack on top of the old value.
+               * Recomputing from the actual links is always correct and idempotent.
                */
               const textIds = [...textIdByHash.values()]
               if (textIds.length > 0) {
@@ -431,8 +430,8 @@ export const parsePages: Pump = async ({ log }) => {
           }
         }
 
-        // Записи, исчезнувшие после переразбора: не удаляем, а помечаем.
-        // Молчаливая потеря человека — худший возможный отказ парсера.
+        // Records that disappeared after re-parsing: not deleted, just flagged.
+        // Silently losing a person is the worst possible parser failure.
         await tx
           .update(approvals)
           .set({ retiredAt: new Date() })
@@ -450,14 +449,14 @@ export const parsePages: Pump = async ({ log }) => {
             parseError: null,
             parserVersion: PARSER_VERSION,
             parsedAt: new Date(),
-            // Успех обнуляет счётчик: следующая поломка на этой странице
-            // должна получить полный набор попыток, а не остаток прошлой.
+            // Success resets the counter: the next failure on this page
+            // should get a full set of attempts, not the leftover from last time.
             parseAttempts: 0,
             parseNextAttemptAt: null,
           })
           .where(eq(sourcePages.id, claim.id))
 
-        // Витрины за этот день пересчитает rollup.
+        // The dashboards for this day will be recomputed by rollup.
         await tx
           .insert(dirtyDays)
           .values({ day: claim.editionDate, reason: 'parse' })
@@ -470,13 +469,14 @@ export const parsePages: Pump = async ({ log }) => {
       })
     } catch (error) {
       /*
-       * Одна страница не должна останавливать разбор остальных.
-       * Транзакция уже откатилась сама, здесь только освобождается захват
-       * и назначается отсрочка — иначе страница вернулась бы в следующую
-       * же пачку и снова всё уронила.
+       * One page must not stop parsing of the rest.
+       * The transaction has already rolled itself back; here we only
+       * release the claim and schedule a backoff. Otherwise the page
+       * would come right back in the next batch and break everything again.
        *
-       * Причина СУБД лежит в `cause`: drizzle кладёт в message только текст
-       * запроса, и без неё в журнале остаётся простыня из параметров.
+       * The DB's actual reason lives in `cause`: drizzle puts only the
+       * query text in message, and without `cause` the log is left with
+       * a wall of parameters instead.
        */
       const err = error as Error & { cause?: { message?: string; detail?: string } }
       const reason = err.cause?.message ?? err.message
@@ -484,7 +484,7 @@ export const parsePages: Pump = async ({ log }) => {
 
       failures += 1
       await releaseParseClaim(claim, `${reason}${detail}`, maxAttempts)
-      log(`${claim.urlTitle}: РАЗБОР УПАЛ — ${reason}${detail}`)
+      log(`${claim.urlTitle}: PARSE FAILED: ${reason}${detail}`)
       continue
     }
 
@@ -493,8 +493,8 @@ export const parsePages: Pump = async ({ log }) => {
   }
 
   log(
-    `страниц ${pagesDone}, актов ${actsTotal}, одобрений ${approvalsTotal}, ` +
-      `решений ${denialsTotal}, не разобрано ${unparsedTotal}, сбоев ${failures}`,
+    `pages ${pagesDone}, acts ${actsTotal}, approvals ${approvalsTotal}, ` +
+      `decisions ${denialsTotal}, unparsed ${unparsedTotal}, failures ${failures}`,
   )
 
   return {

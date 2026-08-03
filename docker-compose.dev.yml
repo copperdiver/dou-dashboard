@@ -1,10 +1,10 @@
 name: dou-dashboard-dev
 
-# Только инфраструктура — Next.js и воркер запускаются на хосте:
+# Infrastructure only. Next.js and the worker run on the host:
 #   docker compose -f docker-compose.dev.yml up -d
 #   npm run db:migrate && npm run db:seed-reference
-#   npm run dev        # в одном терминале
-#   npm run worker:dev # во втором
+#   npm run dev        # in one terminal
+#   npm run worker:dev # in another
 
 services:
   postgres:

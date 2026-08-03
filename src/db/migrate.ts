@@ -1,6 +1,6 @@
 /**
- * Применяет SQL-миграции из ./drizzle.
- * Запускается отдельным сервисом migrate в docker compose до web и worker.
+ * Applies SQL migrations from ./drizzle.
+ * Runs as a separate migrate service in docker compose, before web and worker.
  */
 import { fileURLToPath } from 'node:url'
 import { sql } from 'drizzle-orm'
@@ -10,17 +10,17 @@ import { closePool, db } from './client'
 const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url))
 
 try {
-  // Расширения создаются до миграций: GIN-индексы по gin_trgm_ops
-  // и нормализация имён без них не создадутся.
-  console.log('[migrate] включаю расширения pg_trgm и unaccent')
+  // Extensions are created before migrations: GIN indexes on gin_trgm_ops
+  // and name normalization won't work without them.
+  console.log('[migrate] enabling pg_trgm and unaccent extensions')
   await db.execute(sql`create extension if not exists pg_trgm`)
   await db.execute(sql`create extension if not exists unaccent`)
 
-  console.log(`[migrate] применяю миграции из ${migrationsFolder}`)
+  console.log(`[migrate] applying migrations from ${migrationsFolder}`)
   await migrate(db, { migrationsFolder })
-  console.log('[migrate] готово')
+  console.log('[migrate] done')
 } catch (error) {
-  console.error('[migrate] ошибка:', error)
+  console.error('[migrate] error:', error)
   process.exitCode = 1
 } finally {
   await closePool()

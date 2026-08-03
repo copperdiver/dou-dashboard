@@ -4,11 +4,11 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState, useTransition } from 'react'
 
 /**
- * Периодически перезапрашивает серверные данные страницы.
- * Никаких форматов времени в разметке — иначе SSR и клиент расходятся.
+ * Periodically refetches the page's server data.
+ * No time formatting in the markup: otherwise SSR and client would diverge.
  *
- * Подпись интервала приходит готовой строкой: интервал форматирует сервер
- * тем же `formatDuration`, что и остальные длительности на странице.
+ * The interval label arrives as a ready-made string: the server formats the
+ * interval with the same `formatDuration` used for other durations on the page.
  */
 export function AutoRefresh({
   intervalMs,

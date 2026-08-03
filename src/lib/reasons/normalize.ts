@@ -1,26 +1,28 @@
 /**
- * Нормализация текста причины отказа с сохранением смещений и разбиение
- * на клаузы.
+ * Normalizing denial reason text while preserving offsets, and splitting
+ * it into clauses.
  *
- * Смещения нужны не для красоты: правила возвращают спаны-доказательства,
- * по ним считается доля покрытого текста, и — главное — в LLM уходит
- * только непокрытый остаток, а не весь текст. Без обратного отображения
- * в исходные координаты подсветить доказательство было бы нечем.
+ * The offsets aren't cosmetic: rules return evidence spans, the covered
+ * text ratio is computed from them, and (most importantly) only the
+ * uncovered remainder goes to the LLM, not the whole text. Without
+ * mapping back to the original coordinates there'd be nothing to
+ * highlight as evidence.
  */
 
 export type Normalized = {
-  /** Без диакритики, в нижнем регистре, одиночные пробелы. */
+  /** No diacritics, lowercase, single spaces. */
   text: string
-  /** map[i] — индекс символа в исходной строке, породившего text[i]. */
+  /** map[i]: index of the source-string character that produced text[i]. */
   map: number[]
 }
 
 /**
- * Строит нормализованную строку и отображение обратно в исходные индексы.
+ * Builds the normalized string along with a mapping back to source indices.
  *
- * Диакритика снимается через NFD: `ã` → `a` + combining tilde, вторая
- * часть выбрасывается. Длина строки при этом меняется, поэтому наивный
- * `indexOf` в нормализованном тексте не дал бы позицию в исходном.
+ * Diacritics are stripped via NFD: `ã` → `a` + combining tilde, and the
+ * second part is discarded. This changes the string length, so a naive
+ * `indexOf` on the normalized text wouldn't give the position in the
+ * original.
  */
 export function normalizeWithMap(raw: string): Normalized {
   const chars: string[] = []
@@ -31,7 +33,7 @@ export function normalizeWithMap(raw: string): Normalized {
     const source = raw[i]!
 
     if (/\s/.test(source)) {
-      // Пробельный прогон сжимается в один пробел; ведущие отбрасываются.
+      // A run of whitespace collapses into one space; leading whitespace is dropped.
       if (chars.length > 0) pendingSpace = true
       continue
     }
@@ -43,7 +45,7 @@ export function normalizeWithMap(raw: string): Normalized {
     }
 
     for (const part of source.normalize('NFD')) {
-      // Combining marks (U+0300..U+036F и прочие) выбрасываем.
+      // Discard combining marks (U+0300..U+036F and others).
       if (/\p{Mn}/u.test(part)) continue
       chars.push(part.toLowerCase())
       map.push(i)
@@ -53,42 +55,41 @@ export function normalizeWithMap(raw: string): Normalized {
   return { text: chars.join(''), map }
 }
 
-/** Переводит спан в нормализованных координатах в исходные. */
+/** Converts a span in normalized coordinates back to source coordinates. */
 export function toRawSpan(
   normalized: Normalized,
   start: number,
   end: number,
 ): { start: number; end: number } {
   const rawStart = normalized.map[start] ?? 0
-  // end указывает за последний символ, поэтому берём отображение
-  // последнего входящего и добавляем единицу.
+  // end points past the last character, so take the mapping of the last
+  // included character and add one.
   const lastIndex = Math.max(start, end - 1)
   const rawEnd = (normalized.map[lastIndex] ?? rawStart) + 1
   return { start: rawStart, end: rawEnd }
 }
 
 /**
- * Преамбула, присутствующая почти в каждом тексте причины. Смысла не
- * несёт, но забивает и похожесть, и промпт LLM.
+ * The preamble present in almost every reason text. Carries no meaning,
+ * but pollutes both similarity comparison and the LLM prompt.
  *
- * Возвращает позицию в НОРМАЛИЗОВАННОМ тексте, с которой начинается
- * содержательная часть.
+ * Returns the position in the NORMALIZED text where the substantive part begins.
  */
 /*
- * Голова преамбулы: должность плюс формула о полномочиях. Наблюдались
+ * Head of the preamble: job title plus the authority formula. Observed
  * `A COORDENADORA DE PROCESSOS MIGRATÓRIOS, no uso da competência
- * delegada pela Portaria nº 623...` и `O CHEFE DA DIVISÃO ..., no uso
+ * delegada pela Portaria nº 623...` and `O CHEFE DA DIVISÃO ..., no uso
  * de suas atribuições legais`.
  */
 const PREAMBLE_HEAD =
   /^[ao]\s+(?:coordenador[ae]?|chefe|dirigente)\b[\s\S]{0,300}?(?:competencia\s+delegada|atribui\w+\s+lega\w+)/
 
 /**
- * Начало содержательной части: глагол решения либо оборот, вводящий
- * основание. Привязка к ним, а не к подсчёту запятых: в преамбуле запятых
- * несколько (номер портарии, дата, дата публикации), и шаблон вида
- * `[^,]*,` обрывался на первой из них, оставляя половину преамбулы
- * в тексте причины.
+ * The start of the substantive part: a decision verb or a phrase
+ * introducing the grounds. Anchored to these rather than counting
+ * commas: the preamble has several commas (portaria number, date,
+ * publication date), and a pattern like `[^,]*,` would stop at the
+ * first one, leaving half the preamble inside the reason text.
  */
 const SUBSTANCE =
   /\b(?:indefere|indeferir|indeferido|defere|deferir|considerando|resolve|declara|declarar|arquivar|arquivamento|tendo em vista|em razao|por descumprimento|nos termos)\b/
@@ -99,26 +100,26 @@ export function preambleEnd(normalizedText: string): number {
 
   const rest = normalizedText.slice(head[0].length)
   const substance = SUBSTANCE.exec(rest)
-  // Голова есть, а содержательного маркера нет — режем только голову,
-  // чтобы не выбросить весь текст.
+  // Head is present but there's no substance marker, so cut only the head:
+  // don't discard the whole text.
   return substance ? head[0].length + substance.index : head[0].length
 }
 
-/** Маскирует цифровые серии: номера законов, статей и дат смысла не несут. */
+/** Masks digit sequences: law, article, and date numbers carry no meaning. */
 export function maskDigits(value: string): string {
   return value.replace(/\d+/g, '#')
 }
 
 /**
- * Ключ дедупликации текста причины.
+ * Deduplication key for a reason text.
  *
- * Дешёвый и НЕ зависящий от версии правил: его считает парсер при
- * создании `reason_texts`, чтобы одинаковые тексты не заводились дважды.
- * Замер: 267 текстов сворачиваются в 203 уникальных, а правила и LLM
- * работают по уникальным, а не по каждому отказу.
+ * Cheap and NOT dependent on the rules version: the parser computes it
+ * when creating `reason_texts`, so identical texts aren't inserted twice.
+ * Measured: 267 texts collapse into 203 unique ones, and rules and the
+ * LLM operate on the unique set, not on every denial.
  *
- * Единственная реализация нормализации в проекте — все, кому нужен этот
- * ключ, зовут её, а не повторяют логику.
+ * The only normalization implementation in the project: anyone who
+ * needs this key calls it rather than duplicating the logic.
  */
 export function reasonDedupKey(raw: string): { textNorm: string; normSha256Input: string } {
   const normalized = normalizeWithMap(raw)
@@ -128,15 +129,15 @@ export function reasonDedupKey(raw: string): { textNorm: string; normSha256Input
 
 export type Clause = {
   text: string
-  /** Координаты в нормализованном тексте. */
+  /** Coordinates in the normalized text. */
   start: number
   end: number
 }
 
 /**
- * Сокращения, после точки в которых предложение НЕ заканчивается.
- * Без этой защиты `art. 65` рвался бы на две клаузы, и правило,
- * опирающееся на номер статьи вместе с inciso, перестало бы срабатывать.
+ * Abbreviations after whose period a sentence does NOT end. Without this
+ * guard, `art. 65` would be split into two clauses, and a rule relying
+ * on the article number together with the inciso would stop matching.
  */
 const ABBREVIATIONS = new Set([
   'art',
@@ -173,19 +174,19 @@ function isAbbreviationBefore(text: string, dotIndex: number): boolean {
   while (start >= 0 && /[\p{L}\p{N}º°]/u.test(text[start]!)) start -= 1
   const token = text.slice(start + 1, dotIndex)
   if (token.length === 0) return false
-  // Одиночная буква или цифра — почти всегда инициал или номер.
+  // A single letter or digit is almost always an initial or a number.
   if (token.length === 1) return true
   if (/^\d+$/.test(token)) return true
   return ABBREVIATIONS.has(token)
 }
 
 /**
- * Режет нормализованный текст на клаузы.
+ * Splits the normalized text into clauses.
  *
- * Границы: `;`, перечислительное ` e `, и `. ` с защитой от сокращений.
- * Клаузы нужны, чтобы правила и похожесть работали по смысловым
- * фрагментам: похожесть по полному тексту делает все тексты похожими
- * из-за общего юридического бойлерплейта.
+ * Boundaries: `;`, the enumerative ` e `, and `. ` with abbreviation
+ * protection. Clauses exist so that rules and similarity comparison work
+ * on meaningful fragments: similarity over the full text makes all texts
+ * look alike because of shared legal boilerplate.
  */
 export function segmentClauses(normalizedText: string, from = 0): Clause[] {
   const clauses: Clause[] = []
@@ -194,7 +195,7 @@ export function segmentClauses(normalizedText: string, from = 0): Clause[] {
   const push = (end: number) => {
     const text = normalizedText.slice(start, end).trim()
     if (text.length >= 3) {
-      // Пересчитываем границы после trim, чтобы спаны не включали пробелы.
+      // Recompute boundaries after trim, so spans don't include whitespace.
       const leading = normalizedText.slice(start, end).indexOf(text[0]!)
       const realStart = start + Math.max(0, leading)
       clauses.push({ text, start: realStart, end: realStart + text.length })
@@ -217,8 +218,8 @@ export function segmentClauses(normalizedText: string, from = 0): Clause[] {
       continue
     }
 
-    // Перечислительное ` e ` — граница только если по обе стороны
-    // достаточно текста, иначе рвутся имена вида `X e Y`.
+    // The enumerative ` e ` is a boundary only if there's enough text on
+    // both sides, otherwise names like `X e Y` get split.
     if (
       ch === ' ' &&
       normalizedText.slice(i, i + 3) === ' e ' &&

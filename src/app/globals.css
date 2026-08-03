@@ -1,21 +1,22 @@
 @import "tailwindcss";
 
 /*
- * Палитра дашборда — восемь категориальных слотов в фиксированном порядке.
+ * Dashboard palette: eight categorical slots in a fixed order.
  *
- * Порядок слотов и есть механизм защиты от дальтонизма: он подобран так,
- * чтобы соседние пары расходились по ΔE, и переставлять его нельзя.
- * Прогон валидатора против наших поверхностей: обе темы проходят все
- * проверки, худшая соседняя пара по CVD — ΔE 9.1 в светлой и 8.4 в тёмной
- * при пороге 8.
+ * The slot order is itself the colorblindness safeguard: it's chosen so
+ * neighboring pairs diverge enough in ΔE, and reordering it is not allowed.
+ * Validator run against our surfaces: both themes pass all checks, worst
+ * neighboring pair under CVD is ΔE 9.1 in light and 8.4 in dark, against a
+ * threshold of 8.
  *
- * В светлой теме слоты 3, 4 и 5 (бирюзовый, жёлтый, маджента) не дотягивают
- * до контраста 3:1 к поверхности. Это разрешено только с компенсацией,
- * поэтому каждый категориальный график обязан нести легенду со значениями
- * и раскрываемую таблицу — цвет никогда не единственный носитель смысла.
+ * In the light theme, slots 3, 4, and 5 (teal, yellow, magenta) fall short
+ * of 3:1 contrast against the surface. That's only allowed with
+ * compensation, so every categorical chart must carry a legend with values
+ * and an expandable table: color is never the sole carrier of meaning.
  *
- * Статусные цвета в серии не годятся: красно-зелёная пара даёт ΔE 4.1 при
- * дейтеранопии. Они живут только в бейджах и всегда идут с иконкой и текстом.
+ * Status colors don't work as a series: the red-green pair gives ΔE 4.1
+ * under deuteranopia. They only live in badges, always paired with an icon
+ * and text.
  */
 :root {
   color-scheme: light;
@@ -39,9 +40,9 @@
   --series-8: #e34948;
 
   /*
-   * Тинты плиток KPI. Это цвет поверхности, а не данных: смысл несёт
-   * значение на плитке, а не её фон. Контраст основного текста на каждом
-   * тинте — 17:1, вторичного — 7:1.
+   * KPI tile tints. This is a surface color, not a data color: meaning is
+   * carried by the value on the tile, not by its background. Primary text
+   * contrast on each tint is 17:1, secondary is 7:1.
    */
   --tint-1: #e8f1fc;
   --tint-2: #fdeee7;
@@ -53,29 +54,30 @@
   --status-critical: #d03b3b;
   --delta-good: #006300;
 
-  /* Высота нижней панели вкладок: на неё отступает содержимое страницы. */
+  /* Height of the bottom tab bar: page content pads for it. */
   --nav-h: 3.5rem;
 
   /*
-   * Ширина бокового меню на десктопе. Живёт переменной, потому что от неё
-   * зависит и само меню, и левый отступ содержимого: два числа в разных
-   * местах разъехались бы при первой же правке.
+   * Width of the desktop sidebar. Lives as a variable because both the
+   * sidebar itself and the content's left padding depend on it: two
+   * numbers in different places would drift apart on the first edit.
    */
   --nav-w: 13rem;
 }
 
-/* Свёрнутое меню — одни иконки. */
+/* Collapsed menu: icons only. */
 :root[data-nav="collapsed"] {
   --nav-w: 4rem;
 }
 
 /*
- * Тёмные значения объявлены дважды: media-запрос ловит настройку системы,
- * scope [data-theme] — выбор пользователя, и он обязан побеждать в обе
- * стороны. Guard :not([data-theme="light"]) даёт светлой метке перебить
- * системную тёмную, а :where() держит вес media-блока ниже переключателя.
- * Тёмные шаги серий — не «осветлённые» светлые, а отдельно подобранный
- * набор под тёмную поверхность; менять их можно только парой.
+ * Dark values are declared twice: the media query catches the system
+ * setting, the [data-theme] scope catches the user's choice, and the
+ * latter must win in both directions. The :not([data-theme="light"])
+ * guard lets a light tag override a dark system setting, and :where()
+ * keeps the media block's specificity below the toggle. The dark series
+ * steps aren't "lightened" light ones; they're a separately tuned set for
+ * the dark surface; change them only as a pair.
  */
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
@@ -170,10 +172,10 @@
 }
 
 /*
- * Знак студии в двух вариантах: тёмно-серый для светлой темы, золотой для
- * тёмной. Оба — одна и та же альфа-маска, отличается только цвет заливки.
- * Переключение объявлено в тех же трёх областях, что и палитра, чтобы
- * выбор пользователя побеждал системную настройку.
+ * Studio mark in two variants: dark gray for the light theme, gold for the
+ * dark one. Both are the same alpha mask, only the fill color differs.
+ * The switch is declared in the same three scopes as the palette, so the
+ * user's choice wins over the system setting.
  */
 .logo-dark {
   display: none;

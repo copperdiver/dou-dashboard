@@ -6,24 +6,25 @@ import { LOCALE_LABELS, LOCALES, type Locale } from '@/i18n/config'
 import { SEGMENT_GROUP, segmentClass } from '@/components/segmented'
 
 /**
- * Переключатель языка.
+ * Language switcher.
  *
- * Обычные ссылки на тот же путь с другой локалью: язык — часть адреса,
- * поэтому страница пересылается вместе с языком, а переключение работает
- * без JS. Клиентский компонент нужен только чтобы узнать текущий путь.
+ * Plain links to the same path with a different locale: the language is
+ * part of the URL, so the page can be shared along with the language, and
+ * switching works without JS. The client component is only needed to know
+ * the current path.
  *
- * Параметры запроса переносятся: иначе смена языка на отфильтрованном
- * фиде сбрасывала бы фильтры и период.
+ * Query params are carried over: otherwise switching language on a
+ * filtered feed would reset the filters and the period.
  *
- * На сегменте код языка, а не флаг: флаг обозначает страну, а не язык,
- * и английский пришлось бы приписать какой-то одной из них. Полное
- * самоназвание остаётся доступным именем ссылки.
+ * The segment shows the language code, not a flag: a flag denotes a
+ * country, not a language, and English would have to be pinned to one
+ * arbitrarily. The full self-name stays available as the link's accessible name.
  */
 export function LanguageSwitcher({ locale, label }: { locale: Locale; label: string }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  // Первый сегмент — локаль; остальной путь и есть текущая страница.
+  // The first segment is the locale; the rest of the path is the current page.
   const rest = pathname.split('/').slice(2).join('/')
   const query = searchParams.toString()
 

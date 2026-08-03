@@ -5,15 +5,15 @@ type StatTileProps = {
   locale: Locale
   label: string
   value: string
-  /** Относительное изменение к предыдущему периоду, 0..∞. null — скрыть. */
+  /** Relative change against the previous period, 0..∞. null hides it. */
   change?: number | null
-  /** Рост — это хорошо? Для «Ошибок» — нет. */
+  /** Is going up good? Not for "Errors". */
   betterWhenUp?: boolean
-  /** С каким периодом сравниваем, например «к предыдущим 30 дням». */
+  /** What period we're comparing against, e.g. "vs. previous 30 days". */
   comparedTo?: string
-  /** Текст под значением, когда сравнивать не с чем. */
+  /** Text under the value when there's nothing to compare against. */
   hint?: string
-  /** Подпись «без изменений» на языке страницы. */
+  /** "Unchanged" label in the page's language. */
   unchangedLabel?: string
 }
 
@@ -30,8 +30,8 @@ export function StatTile({
   return (
     <div className="rounded-xl border border-hairline bg-surface p-4">
       <div className="text-xs text-ink-secondary">{label}</div>
-      {/* Крупное значение — пропорциональные цифры: tabular-nums на этом
-          размере выглядит разреженным (см. правило про цифры). */}
+      {/* Large value uses proportional figures: tabular-nums looks too spread
+          out at this size (see the rule about digits). */}
       <div className="mt-2 text-3xl font-semibold tracking-tight text-ink">{value}</div>
       <div className="mt-1.5 min-h-4 text-xs">
         {change === null ? (

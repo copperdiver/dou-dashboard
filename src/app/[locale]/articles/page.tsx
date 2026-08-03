@@ -40,14 +40,14 @@ export default async function ArticlesPage({
               {formatEditionDate(locale, item.editionDate)}
             </p>
 
-            {/* Заголовки источника бывают без пробелов — длинный путь вида
-                `.../DNN_Naturalizacao/CPMIG/...` на узком экране распирал бы
-                карточку, поэтому разрешаем перенос внутри слова. */}
+            {/* Source titles can come without spaces: a long path like
+                `.../DNN_Naturalizacao/CPMIG/...` would blow out the card
+                on a narrow screen, so mid-word breaking is allowed. */}
             <p className="mt-1 text-sm font-medium break-words text-ink">{item.title}</p>
 
-            {/* Нулевые счётчики не показываем: на странице с одними
-                прекращениями «Одобрения 0 · Отказы 0» читается как «пусто»,
-                хотя решения там есть. */}
+            {/* Zero counters aren't shown: on a page with only terminations,
+                "Approvals 0 · Denials 0" reads as "empty" even though
+                decisions are there. */}
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               {item.approvals > 0 && (
                 <Metric
@@ -84,7 +84,7 @@ export default async function ArticlesPage({
   )
 }
 
-/** Счётчик со штрихом цвета серии — тем же, что у ряда на графиках. */
+/** Counter with a series-colored tick, the same one used for the row on charts. */
 function Metric({ label, value, slot }: { label: string; value: string; slot: number }) {
   return (
     <span className="inline-flex items-baseline gap-1.5">

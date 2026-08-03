@@ -1,12 +1,12 @@
 /**
- * Прогоняет парсер по уже загруженным страницам и печатает, что вышло.
+ * Runs the parser over already-fetched pages and prints the results.
  *
  *   npx tsx --env-file-if-exists=.env scripts/parse-report.ts
  *   npx tsx --env-file-if-exists=.env scripts/parse-report.ts --limit=5 --verbose
  *
- * Ничего не пишет в БД — только читает. Нужно, чтобы видеть последствия
- * правок парсера до того, как они попадут в данные, и чтобы находить
- * абзацы, которые парсер не понял.
+ * Writes nothing to the DB (read-only). Needed to see the effect of
+ * parser changes before they hit the data, and to find paragraphs the
+ * parser failed to understand.
  */
 import { desc, eq } from 'drizzle-orm'
 import { closePool, db } from '../src/db/client'
@@ -58,8 +58,8 @@ try {
     const acts = splitActs(blocks)
     totals.acts += acts.length
 
-    // Заголовок печатается до разбора: иначе предупреждения об абзацах
-    // приписываются следующей странице.
+    // The header is printed before parsing: otherwise paragraph warnings
+    // get attributed to the next page.
     console.log(`\n${page.editionDate} ${page.urlTitle}`)
 
     const perPage: string[] = []
@@ -74,8 +74,8 @@ try {
         totals.withoutBirthDate += people.filter((p) => !p.birthDate).length
         totals.withoutState += people.filter((p) => !p.stateRaw).length
         totals.withoutProcess += people.filter((p) => !p.processNumberNorm).length
-        perPage.push(`акт#${act.ordinal} approval(${act.naturalizationType ?? '?'}): ${people.length} чел.`)
-        for (const u of unparsed) console.log(`  [НЕ РАЗОБРАНО: ${u.reason}] ${u.text.slice(0, 180)}`)
+        perPage.push(`act#${act.ordinal} approval(${act.naturalizationType ?? '?'}): ${people.length} people`)
+        for (const u of unparsed) console.log(`  [UNPARSED: ${u.reason}] ${u.text.slice(0, 180)}`)
         if (verbose) {
           for (const p of people.slice(0, 3)) {
             console.log(
@@ -90,31 +90,31 @@ try {
         totals.upheld += denials.filter((d) => d.isUpheld).length
         totals.nonNaturalization += denials.filter((d) => d.subjectKind !== 'naturalization').length
         totals.withoutReasonText += denials.filter((d) => !d.reasonText).length
-        perPage.push(`акт#${act.ordinal} denial_list: ${denials.length} блоков`)
-        for (const u of unparsed) console.log(`  [НЕ РАЗОБРАНО: ${u.reason}] ${u.text.slice(0, 180)}`)
+        perPage.push(`act#${act.ordinal} denial_list: ${denials.length} blocks`)
+        for (const u of unparsed) console.log(`  [UNPARSED: ${u.reason}] ${u.text.slice(0, 180)}`)
         if (verbose) {
           for (const d of denials.slice(0, 3)) {
             console.log(
-              `    ${d.fullName} | ${d.assuntoRaw} → ${d.decisionKind}${d.isUpheld ? '/upheld' : ''} | ${d.subjectKind} | причина ${d.reasonText ? `${d.reasonText.length} симв.` : '—'}`,
+              `    ${d.fullName} | ${d.assuntoRaw} → ${d.decisionKind}${d.isUpheld ? '/upheld' : ''} | ${d.subjectKind} | reason ${d.reasonText ? `${d.reasonText.length} chars` : '—'}`,
             )
           }
         }
       } else {
-        perPage.push(`акт#${act.ordinal} ${act.kind}`)
+        perPage.push(`act#${act.ordinal} ${act.kind}`)
       }
     }
 
-    console.log(`  ${acts.length} акт(ов): ${perPage.join('; ')}`)
+    console.log(`  ${acts.length} act(s): ${perPage.join('; ')}`)
   }
 
-  console.log('\n───── ИТОГО ─────')
-  console.log(`страниц: ${totals.pages}, актов: ${totals.acts}`)
-  console.log(`по типам актов: ${JSON.stringify(totals.byKind)}`)
-  console.log(`одобрений: ${totals.approvals} (без даты рождения ${totals.withoutBirthDate}, без штата ${totals.withoutState}, без процесса ${totals.withoutProcess})`)
-  console.log(`отказов: ${totals.denials} (подтверждений ${totals.upheld}, не о натурализации ${totals.nonNaturalization}, без текста причины ${totals.withoutReasonText})`)
-  console.log(`НЕ РАЗОБРАНО абзацев: ${totals.unparsed}`)
+  console.log('\n───── TOTALS ─────')
+  console.log(`pages: ${totals.pages}, acts: ${totals.acts}`)
+  console.log(`by act type: ${JSON.stringify(totals.byKind)}`)
+  console.log(`approvals: ${totals.approvals} (without birth date ${totals.withoutBirthDate}, without state ${totals.withoutState}, without process ${totals.withoutProcess})`)
+  console.log(`denials: ${totals.denials} (upheld ${totals.upheld}, not about naturalization ${totals.nonNaturalization}, without reason text ${totals.withoutReasonText})`)
+  console.log(`UNPARSED paragraphs: ${totals.unparsed}`)
 } catch (error) {
-  console.error('Ошибка:', error)
+  console.error('Error:', error)
   process.exitCode = 1
 } finally {
   await closePool()
