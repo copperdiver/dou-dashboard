@@ -115,7 +115,7 @@ function Cards({
             {locale === 'ru' ? item.countryNameRu : item.countryNameEn}
             {item.stateUf && (
               <>
-                {' · '}
+                {' → '}
                 {locale === 'ru' ? item.stateNameRu : item.stateNameEn}
               </>
             )}
