@@ -89,6 +89,13 @@ const ru = {
     reasonsUnknown: 'причина не определена ещё у {count}',
     ageDistribution: 'Возраст получивших гражданство',
     ageExcluded: 'без даты рождения в источнике: {count}',
+    countryDistribution: 'Страна рождения получивших гражданство',
+    // Стран под сотню, а слотов палитры восемь, поэтому хвост сворачивается
+    // в одну группу. Сколько стран в неё попало — надо сказать: иначе
+    // сектор выглядит как одна страна с непонятным названием.
+    countryOther: 'Остальные страны',
+    countryOtherNote: 'в «остальных» — стран: {count}',
+    countryExcluded: 'без узнанной страны рождения в источнике: {count}',
     overTime: 'Одобрения и отказы по дням',
     categoriesOverTime: 'Категории причин во времени',
     openDrilldown: 'Разбивка по времени',
@@ -328,6 +335,10 @@ const en: EnglishDictionary = {
     reasonsUnknown: 'reason not yet determined for {count} more',
     ageDistribution: 'Age at naturalisation',
     ageExcluded: 'no birth date in the source: {count}',
+    countryDistribution: 'Country of birth at naturalisation',
+    countryOther: 'Other countries',
+    countryOtherNote: '“other” covers {count} countries',
+    countryExcluded: 'no recognised country of birth in the source: {count}',
     overTime: 'Approvals and denials per day',
     categoriesOverTime: 'Reason categories over time',
     openDrilldown: 'Break down over time',

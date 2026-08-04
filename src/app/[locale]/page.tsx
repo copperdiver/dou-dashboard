@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
-import { AgePieChart } from '@/components/charts/age-pie-chart'
 import { CategoryBarChart } from '@/components/charts/category-bar-chart'
+import { DonutChart } from '@/components/charts/donut-chart'
 import { TimeSeriesChart } from '@/components/charts/time-series-chart'
 import { DateRange } from '@/components/date-range'
 import { KpiTile } from '@/components/kpi-tile'
@@ -8,6 +8,7 @@ import { getTranslator, isLocale, type Locale } from '@/i18n'
 import { formatNumber, formatPercent, relativeChange } from '@/lib/format'
 import {
   getAgeDistribution,
+  getCountryDistribution,
   getDailySeries,
   getDataBounds,
   getKpis30d,
@@ -24,6 +25,13 @@ export const dynamic = 'force-dynamic'
 const SPARK_DAYS = 180
 
 const AGE_ORDER: AgeBucket[] = ['0-17', '18-24', '25-34', '35-44', '45-54', '55-64', '65+']
+
+/**
+ * How many sectors the country donut may have. Eight is the size of the
+ * palette; beyond it colors would repeat and the legend would stop
+ * identifying anything. The last slot goes to the folded tail.
+ */
+const COUNTRY_SLOTS = 8
 
 type Search = { range?: string; from?: string; to?: string }
 
@@ -47,7 +55,7 @@ export default async function OverviewPage({
     return <DatabaseUnavailable locale={locale} message={(error as Error).message} />
   }
 
-  const { range, kpis, spark, series, categories, age } = data
+  const { range, kpis, spark, series, categories, age, country } = data
 
 
   return (
@@ -163,49 +171,52 @@ export default async function OverviewPage({
         </div>
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-2xl border border-hairline bg-surface p-4 sm:p-5">
-          <h2 className="text-sm font-semibold text-ink">{d.charts.reasonCategories}</h2>
-          <div className="mt-4">
-            <CategoryBarChart
-              locale={locale}
-              rows={categories.rows.map((c) => ({
-                id: c.id,
-                code: c.code,
-                label: locale === 'ru' ? c.nameRu : c.nameEn,
-                colorSlot: c.colorSlot,
-                denials: c.denials,
-              }))}
-              // The denominator is denials with an identified reason, not all
-              // of them: a denial with no reason at all can't land in the numerator.
-              denialsTotal={categories.classified}
-              note={d.charts.reasonCategoriesNote}
-              baseNote={fill(d.charts.reasonCategoriesBase, {
-                count: formatNumber(locale, categories.classified),
-              })}
-              unknownNote={
-                categories.total > categories.classified
-                  ? fill(d.charts.reasonsUnknown, {
-                      count: formatNumber(locale, categories.total - categories.classified),
-                    })
-                  : undefined
-              }
-              emptyLabel={d.common.noData}
-              drilldownHref={`/${locale}/denials/categories?${searchToQuery(search)}`}
-              drilldownLabel={d.charts.openDrilldown}
-            />
-          </div>
-        </section>
+      {/* Reasons run the full width: it's a ranked bar chart with long
+          category names, and halving the width costs it label room. The two
+          donuts below are square and read fine side by side. */}
+      <section className="rounded-2xl border border-hairline bg-surface p-4 sm:p-5">
+        <h2 className="text-sm font-semibold text-ink">{d.charts.reasonCategories}</h2>
+        <div className="mt-4">
+          <CategoryBarChart
+            locale={locale}
+            rows={categories.rows.map((c) => ({
+              id: c.id,
+              code: c.code,
+              label: locale === 'ru' ? c.nameRu : c.nameEn,
+              colorSlot: c.colorSlot,
+              denials: c.denials,
+            }))}
+            // The denominator is denials with an identified reason, not all
+            // of them: a denial with no reason at all can't land in the numerator.
+            denialsTotal={categories.classified}
+            note={d.charts.reasonCategoriesNote}
+            baseNote={fill(d.charts.reasonCategoriesBase, {
+              count: formatNumber(locale, categories.classified),
+            })}
+            unknownNote={
+              categories.total > categories.classified
+                ? fill(d.charts.reasonsUnknown, {
+                    count: formatNumber(locale, categories.total - categories.classified),
+                  })
+                : undefined
+            }
+            emptyLabel={d.common.noData}
+            drilldownHref={`/${locale}/denials/categories?${searchToQuery(search)}`}
+            drilldownLabel={d.charts.openDrilldown}
+          />
+        </div>
+      </section>
 
+      <div className="grid gap-4 lg:grid-cols-2">
         <section className="rounded-2xl border border-hairline bg-surface p-4 sm:p-5">
           <h2 className="text-sm font-semibold text-ink">{d.charts.ageDistribution}</h2>
           <div className="mt-4">
-            <AgePieChart
+            <DonutChart
               locale={locale}
               slices={AGE_ORDER.map((bucket) => ({
-                bucket,
+                id: bucket,
                 label: d.ageBuckets[bucket],
-                approvals: age.buckets.find((b) => b.bucket === bucket)?.approvals ?? 0,
+                value: age.buckets.find((b) => b.bucket === bucket)?.approvals ?? 0,
               }))}
               excluded={age.excluded}
               excludedLabel={fill(d.charts.ageExcluded, {
@@ -213,7 +224,53 @@ export default async function OverviewPage({
               })}
               totalLabel={d.common.total}
               showTableLabel={d.common.showTable}
-              bucketLabel={d.fields.age}
+              sliceLabel={d.fields.age}
+              countLabel={d.nav.approvals}
+              shareLabel={d.charts.ofTotal}
+              emptyLabel={d.common.noData}
+            />
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-hairline bg-surface p-4 sm:p-5">
+          <h2 className="text-sm font-semibold text-ink">{d.charts.countryDistribution}</h2>
+          <div className="mt-4">
+            <DonutChart
+              locale={locale}
+              slices={[
+                ...country.countries.map((c) => ({
+                  id: c.iso2,
+                  label: locale === 'ru' ? c.nameRu : c.nameEn,
+                  value: c.approvals,
+                  iso2: c.iso2,
+                })),
+                // The tail goes last regardless of its size: it isn't a
+                // country, and putting it in rank order among countries
+                // would read as one.
+                ...(country.other.count > 0
+                  ? [
+                      {
+                        id: 'other',
+                        label: d.charts.countryOther,
+                        value: country.other.approvals,
+                      },
+                    ]
+                  : []),
+              ]}
+              note={
+                country.other.count > 0
+                  ? fill(d.charts.countryOtherNote, {
+                      count: formatNumber(locale, country.other.count),
+                    })
+                  : undefined
+              }
+              excluded={country.excluded}
+              excludedLabel={fill(d.charts.countryExcluded, {
+                count: formatNumber(locale, country.excluded),
+              })}
+              totalLabel={d.common.total}
+              showTableLabel={d.common.showTable}
+              sliceLabel={d.fields.country}
               countLabel={d.nav.approvals}
               shareLabel={d.charts.ofTotal}
               emptyLabel={d.common.noData}
@@ -242,12 +299,13 @@ async function loadOverview(search: Search) {
   const range = resolveRange(search, bounds)
   const anchor = today()
 
-  const [kpis, sparkSeries, series, categories, age] = await Promise.all([
+  const [kpis, sparkSeries, series, categories, age, country] = await Promise.all([
     getKpis30d(anchor),
     getDailySeries(addDays(anchor, -(SPARK_DAYS - 1)), anchor),
     getDailySeries(range.from, range.to),
     getReasonCategoryTotals(range.from, range.to),
     getAgeDistribution(range.from, range.to),
+    getCountryDistribution(range.from, range.to, COUNTRY_SLOTS),
   ])
 
   return {
@@ -268,6 +326,7 @@ async function loadOverview(search: Search) {
     series,
     categories,
     age,
+    country,
   }
 }
 

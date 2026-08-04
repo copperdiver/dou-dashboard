@@ -2,7 +2,9 @@ import { sql } from 'drizzle-orm'
 import { db } from '../../db/client'
 import {
   approvals,
+  countries,
   dailyAgeBucketStats,
+  dailyCountryStats,
   dailyReasonCategoryStats,
   dailyStats,
   denialReasons,
@@ -336,6 +338,83 @@ export async function getAgeDistribution(from: string, to: string): Promise<AgeD
 
   return {
     buckets: bucketRows.rows,
+    excluded: excludedRows.rows[0]?.n ?? 0,
+  }
+}
+
+export type CountryTotal = {
+  iso2: string
+  nameRu: string
+  nameEn: string
+  approvals: number
+}
+
+export type CountryDistribution = {
+  /** The named countries, largest first. */
+  countries: CountryTotal[]
+  /** The folded tail. `count` is 0 when every country fit on the chart. */
+  other: { count: number; approvals: number }
+  /** Approvals with no recognized country of birth: excluded from the shares. */
+  excluded: number
+}
+
+/**
+ * Countries of birth for the period.
+ *
+ * There are around a hundred countries in the data and eight palette
+ * slots, so the tail is folded into one group rather than truncated: a
+ * donut whose sectors don't add up to the whole would misstate every
+ * share on it. The fold happens here, where the full totals are known,
+ * and the number of folded countries is reported so the caption can say
+ * what got rolled up.
+ *
+ * As with age, the excluded count must be shown: without it the sum of
+ * shares doesn't add up to the number of approvals, and the reader draws
+ * the wrong conclusion about the sample.
+ */
+export async function getCountryDistribution(
+  from: string,
+  to: string,
+  top: number,
+): Promise<CountryDistribution> {
+  const [countryRows, excludedRows] = await Promise.all([
+    db.execute<{ iso2: string; name_ru: string; name_en: string; approvals: number }>(sql`
+      select c.iso2, c.name_ru, c.name_en, sum(s.approvals)::int as approvals
+        from ${dailyCountryStats} s
+        join ${countries} c on c.id = s.country_id
+       where s.day between ${from} and ${to}
+       group by c.iso2, c.name_ru, c.name_en
+      having sum(s.approvals) > 0
+       order by approvals desc, c.name_en
+    `),
+    db.execute<{ n: number }>(sql`
+      select count(*)::int as n
+        from ${approvals}
+       where edition_date between ${from} and ${to}
+         and retired_at is null
+         and counts_as_new_approval
+         and country_id is null
+    `),
+  ])
+
+  const all = countryRows.rows.map((r) => ({
+    iso2: r.iso2,
+    nameRu: r.name_ru,
+    nameEn: r.name_en,
+    approvals: r.approvals,
+  }))
+
+  // One slot is spent on the tail, so only `top - 1` countries are named
+  // whenever there is a tail at all.
+  const named = all.length > top ? all.slice(0, top - 1) : all
+  const tail = all.slice(named.length)
+
+  return {
+    countries: named,
+    other: {
+      count: tail.length,
+      approvals: tail.reduce((sum, c) => sum + c.approvals, 0),
+    },
     excluded: excludedRows.rows[0]?.n ?? 0,
   }
 }

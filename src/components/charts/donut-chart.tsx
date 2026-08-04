@@ -1,18 +1,19 @@
 'use client'
 
 import { useState } from 'react'
+import { Flag } from '@/components/flag'
 import type { Locale } from '@/i18n'
 import { formatNumber, formatPercent } from '@/lib/format'
 
 /**
- * Age of naturalized applicants: a donut chart.
+ * Composition of approvals as a donut: age groups, countries of birth.
  *
  * The donut was chosen deliberately by the client. The form has a cost:
- * groups are ordered by age ascending, but a circle doesn't show order, and
- * sectors close in size can't be compared by eye. That's why a legend with
- * values and shares, plus a table, are mandatory here, and it's not
- * decoration, it's compensation: three palette slots fail 3:1 contrast in
- * the light theme, so color can't carry meaning on its own.
+ * a circle doesn't show order, and sectors close in size can't be
+ * compared by eye. That's why a legend with values and shares, plus a
+ * table, are mandatory here, and it's not decoration, it's compensation:
+ * three palette slots fail 3:1 contrast in the light theme, so color
+ * can't carry meaning on its own.
  *
  * A surface-colored gap is left between sectors: without it, neighboring
  * arcs merge into one under color blindness.
@@ -21,12 +22,20 @@ import { formatNumber, formatPercent } from '@/lib/format'
  * connecting them by color alone gets harder the closer the sectors are in
  * size, and three palette slots in the light theme also fail contrast.
  * The highlight responds to both hover and keyboard focus.
+ *
+ * The palette has eight slots, so the caller must hand over at most eight
+ * slices: for an open-ended dimension like country that means a top-N
+ * plus an "other" bucket, folded together upstream where the totals are
+ * known, not silently truncated here.
  */
 
-export type AgeSlice = {
-  bucket: string
+export type DonutSlice = {
+  /** Stable key: age bucket, ISO code, the `other` sentinel. */
+  id: string
   label: string
-  approvals: number
+  value: number
+  /** Draws a flag in the legend and the table. Countries only. */
+  iso2?: string | null
 }
 
 const SIZE = 200
@@ -36,53 +45,57 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 /** Gap between sectors, in arc-length units. */
 const GAP = 3
 
-export function AgePieChart({
+export function DonutChart({
   locale,
   slices,
   excluded,
   excludedLabel,
+  note,
   totalLabel,
   showTableLabel,
-  bucketLabel,
+  sliceLabel,
   countLabel,
   shareLabel,
   emptyLabel,
 }: {
   locale: Locale
-  slices: AgeSlice[]
+  slices: DonutSlice[]
   excluded: number
   excludedLabel: string
+  /** An extra caption under the chart, shown whenever it is passed. */
+  note?: string
   totalLabel: string
   showTableLabel: string
-  bucketLabel: string
+  /** Header of the first table column: what the slices are. */
+  sliceLabel: string
   countLabel: string
   shareLabel: string
   emptyLabel: string
 }) {
   const [active, setActive] = useState<string | null>(null)
 
-  const shown = slices.filter((s) => s.approvals > 0)
-  const total = shown.reduce((sum, s) => sum + s.approvals, 0)
+  const shown = slices.filter((s) => s.value > 0)
+  const total = shown.reduce((sum, s) => sum + s.value, 0)
 
   if (total === 0) {
     return <p className="text-xs text-ink-secondary">{emptyLabel}</p>
   }
 
-  const lengths = shown.map((slice) => (slice.approvals / total) * CIRCUMFERENCE)
+  const lengths = shown.map((slice) => (slice.value / total) * CIRCUMFERENCE)
 
   const arcs = shown.map((slice, index) => ({
     ...slice,
     slot: index + 1,
-    share: slice.approvals / total,
+    share: slice.value / total,
     // The gap eats into the end of the arc; for very narrow sectors it's
     // capped, otherwise the sector would disappear entirely.
     dash: Math.max((lengths[index] ?? 0) - GAP, 0.5),
-    // There are seven groups, so a recomputed prefix sum is cheaper than an
-    // accumulator and avoids introducing mutable state inside render.
+    // There are at most eight groups, so a recomputed prefix sum is cheaper
+    // than an accumulator and avoids introducing mutable state inside render.
     offset: lengths.slice(0, index).reduce((sum, length) => sum + length, 0),
   }))
 
-  const activeArc = arcs.find((arc) => arc.bucket === active) ?? null
+  const activeArc = arcs.find((arc) => arc.id === active) ?? null
 
   return (
     <div>
@@ -95,11 +108,11 @@ export function AgePieChart({
         >
           <g transform={`rotate(-90 ${SIZE / 2} ${SIZE / 2})`}>
             {arcs.map((arc) => {
-              const dimmed = active !== null && active !== arc.bucket
+              const dimmed = active !== null && active !== arc.id
 
               return (
                 <circle
-                  key={arc.bucket}
+                  key={arc.id}
                   cx={SIZE / 2}
                   cy={SIZE / 2}
                   r={RADIUS}
@@ -107,14 +120,14 @@ export function AgePieChart({
                   stroke={`var(--series-${arc.slot})`}
                   // The active sector is slightly thicker, the rest are dimmed:
                   // thickness still works where color is hard to tell apart.
-                  strokeWidth={active === arc.bucket ? THICKNESS + 6 : THICKNESS}
+                  strokeWidth={active === arc.id ? THICKNESS + 6 : THICKNESS}
                   strokeOpacity={dimmed ? 0.35 : 1}
                   strokeDasharray={`${arc.dash} ${CIRCUMFERENCE - arc.dash}`}
                   strokeDashoffset={-arc.offset}
                   className="cursor-pointer"
-                  onMouseEnter={() => setActive(arc.bucket)}
+                  onMouseEnter={() => setActive(arc.id)}
                   onMouseLeave={() => setActive(null)}
-                  onPointerDown={() => setActive(arc.bucket)}
+                  onPointerDown={() => setActive(arc.id)}
                 />
               )
             })}
@@ -127,7 +140,7 @@ export function AgePieChart({
             textAnchor="middle"
             className="fill-ink text-[22px] font-semibold"
           >
-            {formatNumber(locale, activeArc ? activeArc.approvals : total)}
+            {formatNumber(locale, activeArc ? activeArc.value : total)}
           </text>
           <text
             x={SIZE / 2}
@@ -141,19 +154,19 @@ export function AgePieChart({
 
         {/* Legend with values, not just names: magnitudes can't be read
             off the ring itself. */}
-        <ul className="grid w-full grid-cols-2 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-1">
+        <ul className="grid w-full min-w-0 grid-cols-2 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-1">
           {arcs.map((arc) => {
-            const on = active === arc.bucket
+            const on = active === arc.id
 
             return (
-              <li key={arc.bucket}>
+              <li key={arc.id} className="min-w-0">
                 {/* A button, not just a row: the highlight must work from
                     the keyboard too, not just under the cursor. */}
                 <button
                   type="button"
-                  onMouseEnter={() => setActive(arc.bucket)}
+                  onMouseEnter={() => setActive(arc.id)}
                   onMouseLeave={() => setActive(null)}
-                  onFocus={() => setActive(arc.bucket)}
+                  onFocus={() => setActive(arc.id)}
                   onBlur={() => setActive(null)}
                   aria-current={on ? 'true' : undefined}
                   className={
@@ -166,11 +179,15 @@ export function AgePieChart({
                     style={{ backgroundColor: `var(--series-${arc.slot})` }}
                     aria-hidden="true"
                   />
-                  <span className={on ? 'font-medium text-ink' : 'text-ink-secondary'}>
+                  {arc.iso2 && <Flag iso2={arc.iso2} />}
+                  {/* Country names run long; truncating keeps the number and
+                      the share on the same line, and the table below has the
+                      full name. */}
+                  <span className={'truncate ' + (on ? 'font-medium text-ink' : 'text-ink-secondary')}>
                     {arc.label}
                   </span>
                   <span className="ml-auto shrink-0 tabular-nums text-ink">
-                    {formatNumber(locale, arc.approvals)}
+                    {formatNumber(locale, arc.value)}
                   </span>
                   <span className="w-10 shrink-0 text-right tabular-nums text-ink-muted">
                     {formatPercent(locale, arc.share, 0)}
@@ -182,7 +199,10 @@ export function AgePieChart({
         </ul>
       </div>
 
-      {excluded > 0 && <p className="mt-4 text-xs text-ink-muted">{excludedLabel}</p>}
+      {note && <p className="mt-4 text-xs text-ink-muted">{note}</p>}
+      {excluded > 0 && (
+        <p className={(note ? 'mt-1' : 'mt-4') + ' text-xs text-ink-muted'}>{excludedLabel}</p>
+      )}
 
       <details className="mt-3 text-xs text-ink-secondary">
         <summary className="cursor-pointer select-none hover:text-ink">{showTableLabel}</summary>
@@ -190,19 +210,22 @@ export function AgePieChart({
           <table className="w-full border-collapse text-left [font-variant-numeric:tabular-nums]">
             <thead className="bg-surface">
               <tr className="border-b border-hairline text-ink-muted">
-                <th scope="col" className="px-3 py-2 font-medium">{bucketLabel}</th>
+                <th scope="col" className="px-3 py-2 font-medium">{sliceLabel}</th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">{countLabel}</th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">{shareLabel}</th>
               </tr>
             </thead>
             <tbody>
               {arcs.map((arc) => (
-                <tr key={arc.bucket} className="border-b border-hairline last:border-0">
+                <tr key={arc.id} className="border-b border-hairline last:border-0">
                   <th scope="row" className="px-3 py-1.5 font-normal text-ink-secondary">
-                    {arc.label}
+                    <span className="flex items-baseline gap-1.5">
+                      {arc.iso2 && <Flag iso2={arc.iso2} />}
+                      {arc.label}
+                    </span>
                   </th>
                   <td className="px-3 py-1.5 text-right text-ink">
-                    {formatNumber(locale, arc.approvals)}
+                    {formatNumber(locale, arc.value)}
                   </td>
                   <td className="px-3 py-1.5 text-right text-ink">
                     {formatPercent(locale, arc.share, 0)}
