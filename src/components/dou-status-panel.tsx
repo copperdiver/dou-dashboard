@@ -1,6 +1,7 @@
 import { checkDouConnectivity } from '@/app/[locale]/health/actions'
 import { BTN_OUTLINE } from '@/components/form-controls'
 import type { Locale } from '@/i18n'
+import { sourceVerdict } from '@/lib/dou/verdict'
 import { formatDateTime, formatDuration, formatNumber, formatPercent } from '@/lib/format'
 import type { DouStatus } from '@/lib/queries/dou-status'
 
@@ -13,6 +14,10 @@ import type { DouStatus } from '@/lib/queries/dou-status'
  * budget has been used. There's no dedicated ping on render: it would
  * burn budget and could wake up the WAF; a one-off check is triggered by
  * the button instead.
+ *
+ * Because the verdict is read at a glance and acted on, it must not stay
+ * red once the thing it warned about is over: an alarm that never clears
+ * stops being read at all.
  */
 
 export type StatusLabels = {
@@ -44,18 +49,19 @@ export function DouStatusPanel({
   status: DouStatus
   labels: StatusLabels
 }) {
-  /*
-   * Three states, not two. "Unreachable": a cooldown after a 403 is in
-   * effect, or days have failed outright, so fresh editions won't come in.
-   * "Degraded": there was a success, but the last attempt ended in an
-   * error, so connectivity exists but isn't stable.
-   */
-  const blocked = status.cooldownMs > 0 || status.failedDays > 0
-  const shaky = !blocked && status.lastFailure !== null
+  // Three states, and the rule behind them lives in `sourceVerdict`: it
+  // is the part that has to stay honest, so it is tested separately.
+  const state = sourceVerdict(status)
   // Classes are spelled out in full: Tailwind can't see names assembled
   // from pieces, so `text-${tone}` simply wouldn't make it into the build.
-  const tone = blocked ? 'text-critical' : shaky ? 'text-warning' : 'text-good'
-  const verdict = blocked ? labels.unreachable : shaky ? labels.degraded : labels.reachable
+  const tone =
+    state === 'blocked' ? 'text-critical' : state === 'degraded' ? 'text-warning' : 'text-good'
+  const verdict =
+    state === 'blocked'
+      ? labels.unreachable
+      : state === 'degraded'
+        ? labels.degraded
+        : labels.reachable
 
   return (
     <section className="rounded-2xl border border-hairline bg-surface p-4 sm:p-5">
@@ -74,7 +80,7 @@ export function DouStatusPanel({
       <p className="mt-3 flex items-center gap-2 text-sm">
         {/* Icon paired with a label: color alone doesn't carry the meaning. */}
         <span className={tone} aria-hidden="true">
-          {blocked ? '✕' : shaky ? '!' : '✓'}
+          {state === 'blocked' ? '✕' : state === 'degraded' ? '!' : '✓'}
         </span>
         <span className="font-medium text-ink">{verdict}</span>
       </p>
